@@ -33,6 +33,8 @@
 // also works for constexpr and non-constexpr constructors.
 //
 
+#include <tools/ct_list.hpp>
+
 namespace neam
 {
   namespace ct

@@ -35,6 +35,32 @@ namespace neam
 {
   namespace ct
   {
+    template<typename Ptr>
+    struct is_function_pointer
+    {
+      static constexpr bool value = false;
+    };
+    template<typename Ret, typename... Params>
+    struct is_function_pointer<Ret(*)(Params...)>
+    {
+      static constexpr bool value = true;
+    };
+    template<typename Ret, typename... Params>
+    struct is_function_pointer<Ret(*)(Params......)>
+    {
+      static constexpr bool value = true;
+    };
+    template<typename Ret, typename... Params>
+    struct is_function_pointer<Ret(&)(Params...)>
+    {
+      static constexpr bool value = true;
+    };
+    template<typename Ret, typename... Params>
+    struct is_function_pointer<Ret(&)(Params......)>
+    {
+      static constexpr bool value = true;
+    };
+
     // /// ///
     // for a ct function wrapper
     // /// ///
