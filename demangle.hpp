@@ -34,14 +34,14 @@
 #include <typeinfo>
 #endif
 
-// on GCC only...
+// GCC only...
 #ifdef __GNUC__
 #include <cxxabi.h>
 #include <stdlib.h>
 
 namespace neam
 {
-  std::string demangle(const std::string &symbol)
+  static inline std::string demangle(const std::string &symbol)
   {
     int status = 0;
     char *realname = nullptr;
@@ -58,10 +58,10 @@ namespace neam
     return ret;
   }
 } // neam
-#else
+#else // !__GNUC__
 namespace neam
 {
-  std::string demangle(const std::string &symbol)
+  static inline std::string demangle(const std::string &symbol)
   {
     return symbol;
   }
@@ -71,7 +71,7 @@ namespace neam
 namespace neam
 {
   template<typename Type>
-  std::string demangle()
+  static inline std::string demangle()
   {
 #if defined __GXX_RTTI || __has_feature(cxx_rtti)
     return demangle(typeid(Type).name());

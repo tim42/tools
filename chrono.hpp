@@ -74,12 +74,13 @@ namespace neam
           old_time = now();
         }
 
-
+        // set the speed factor of the timer
         void set_speed(double _speed)
         {
           speed = _speed;
         }
 
+        // get the speed factor of the timer
         double get_speed() const
         {
           return speed;

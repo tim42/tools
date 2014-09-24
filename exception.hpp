@@ -78,7 +78,7 @@ namespace neam
 #define N_CATCH                         N_CATCH_ACTION( )
 
 // a verbose abort
-#define N_ABORT                         {std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": [aborting program]\n" << std::endl; std::cerr.flush(); abort();}
+#define N_ABORT                         do {std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": [aborting program]\n" << std::endl; std::cerr.flush(); abort();} while(0)
 
 // fatal exception (call abort)
 #define N_FATAL_CATCH                   N_CATCH_ACTION(N_ABORT)

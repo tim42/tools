@@ -33,10 +33,10 @@ namespace neam
     class bad_type
     {
       public:
-        static class construct_from_return_t {} construct_from_return;
+        class construct_from_return {};
 
         bad_type() = delete;
-        bad_type(construct_from_return_t) {}
+        bad_type(construct_from_return) {}
         bad_type(bad_type &&) {}
         bad_type(const bad_type &) = delete;
     };

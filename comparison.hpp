@@ -34,6 +34,7 @@ namespace neam
 {
   namespace cr
   {
+    // this is a great horror story for any coder :)
     namespace comparison
     {
       // the base class. Each comparison operator returns the number of 'true' values.
@@ -216,7 +217,6 @@ namespace neam
             return _comparator<Types...>::operator_not(_seq);
           }
 
-          // return the number of 'true' elements
           operator bool() const
           {
             return _comparator<Types...>::operator_size_t(_seq);
@@ -274,7 +274,6 @@ namespace neam
             return !_comparator<Types...>::operator_not(_seq);
           }
 
-          // return the number of 'true' elements
           operator bool() const
           {
             return !_comparator<Types...>::operator_size_t(_seq);
@@ -331,7 +330,6 @@ namespace neam
             return _comparator<Types...>::operator_not(_seq) == sizeof...(Types);
           }
 
-          // return the number of 'true' elements
           operator bool() const
           {
             return _comparator<Types...>::operator_size_t(_seq) == sizeof...(Types);
@@ -389,7 +387,6 @@ namespace neam
             return _comparator<Types...>::operator_not(_seq) > (sizeof...(Types) / 2);
           }
 
-          // return the number of 'true' elements
           operator bool() const
           {
             return _comparator<Types...>::operator_size_t(_seq) > (sizeof...(Types) / 2);
@@ -447,7 +444,6 @@ namespace neam
             return _comparator<Types...>::operator_not(_seq) > num;
           }
 
-          // return the number of 'true' elements
           operator bool() const
           {
             return _comparator<Types...>::operator_size_t(_seq) > num;

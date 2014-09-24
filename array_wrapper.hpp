@@ -29,7 +29,7 @@
 
 namespace neam
 {
-  // a simple array wrapper (you could use it with ushader::niform_variable)
+  // a simple array wrapper (you could use it with yaggler::shader::uniform_variable)
   template<typename Type>
   struct array_wrapper
   {

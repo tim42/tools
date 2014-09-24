@@ -30,6 +30,7 @@ namespace neam
 {
   namespace ct
   {
+    // a simple compile time array
     template<typename Type, Type... Values>
     struct array
     {
@@ -85,7 +86,7 @@ namespace neam
         return data - 1;
       }
 
-      // data (the C type)
+      // the CT data
       static constexpr Type data[sizeof...(Values)] = {Values...};
     };
 

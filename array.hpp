@@ -79,23 +79,6 @@ namespace neam
         return data + Num;
       }
 
-      constexpr Type *rbegin() const
-      {
-        return data + Num - 1;
-      }
-      constexpr Type *rend() const
-      {
-        return data - 1;
-      }
-      Type *rbegin()
-      {
-        return data + Num - 1;
-      }
-      Type *rend()
-      {
-        return data - 1;
-      }
-
       // data (the C type)
       Type data[Num];
     };

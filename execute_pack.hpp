@@ -31,9 +31,20 @@
 //
 // this execute 'instr' for each value in the pack (instr must depends of an variadic template / argument pack)
 // The compiler is smart enought to just remove the array and keep the calls. (and inlining thems, if possible).
-// So this produce no overhead !! :) (and avoid a proxy function).
+// So this produce no overhead !! :) (and avoid a recursive proxy function).
 #define NEAM_EXECUTE_PACK(instr)    void((int []){((instr), 0)...})
 
+// -- usage exemple:
+//
+// // return the sum of the sizes of all types
+// template<typename... Types>
+// size_t sizeof_all()
+// {
+//  size_t size = 0;
+//  NEAM_EXECUTE_PACK(size += sizeof(Types));
+//  return size;
+// }
+//
 
 #endif /*__N_99570474794081008_1534814754__EXECUTE_PACK_HPP__*/
 

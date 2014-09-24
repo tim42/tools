@@ -32,9 +32,9 @@ namespace neam
   namespace cr
   {
     // an enable if (as the one packed with the gnu libc++ doesn't work in my case -- g++ 4.7 & 4.8 on linux --)
-    // it cause an error where the sfinae try to get the ::type when the Cond is false.
+    // it cause an error where the sfinae isn't respected and g++ try to get the ::type when Cond is false.
     // this is a simple workaround that work with argument type instead of sfinae
-    // there's a new template parameter: Line (usually setted to __LINE__) to create a different type when false (WARNING: this is an UGLY solution)
+    // there's a new template parameter: Line (usually setted to __LINE__) to create a different type when false (WARNING: this is an **UGLY** solution)
     template <bool Cond, size_t Line, typename Type> struct enable_if
     {
       using type = struct _

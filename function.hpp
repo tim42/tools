@@ -45,18 +45,13 @@ namespace neam
     {
       static constexpr bool value = true;
     };
-    template<typename Ret, typename... Params>
-    struct is_function_pointer<Ret(*)(Params......)>
+    template<typename Ret, typename Class, typename... Params>
+    struct is_function_pointer<Ret(Class::*)(Params...)>
     {
       static constexpr bool value = true;
     };
     template<typename Ret, typename... Params>
     struct is_function_pointer<Ret(&)(Params...)>
-    {
-      static constexpr bool value = true;
-    };
-    template<typename Ret, typename... Params>
-    struct is_function_pointer<Ret(&)(Params......)>
     {
       static constexpr bool value = true;
     };

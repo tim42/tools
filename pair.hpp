@@ -30,11 +30,14 @@ namespace neam
 {
   namespace ct
   {
+    // a pair of types
     template<typename Type1, typename Type2>
     struct pair
     {
       using type_1 = Type1;
+      using first = Type1;
       using type_2 = Type2;
+      using second = Type2;
     };
   } // namespace ct
 } // namespace neam

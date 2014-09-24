@@ -33,6 +33,8 @@
 // also works for constexpr and non-constexpr constructors.
 //
 
+#include <new>
+#include <memory>
 #include <tools/ct_list.hpp>
 
 namespace neam
@@ -119,6 +121,16 @@ namespace neam
           using type = EmbeddedType;
 
         };
+
+        // use a placement new on an existing object
+        struct placement
+        {
+          static inline void on(ObjectType *ptr)
+          {
+            new (ptr) ObjectType(Values::get()...);
+          }
+          using type = ObjectType;
+        };
       };
     };
 
@@ -129,20 +141,25 @@ namespace neam
 
 // a macro to go with it. (it simply create the constructor<>::template call<> type from the value list).
 // use it like this: neam::ct::N_CT_CONSTRUCTOR_CALL_TYPE(1, &this_variable).
-// Doesn't works with strings (this won't works: neam::ct::N_CT_CONSTRUCTOR_CALL_TYPE("coucou")).
+// Doesn't works with strings (this won't work: neam::ct::N_CT_CONSTRUCTOR_CALL_TYPE("coucou")).
 #define N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ...)     neam::ct::constructor<ObjectType, neam::ct::type_list<__VA_ARGS__>>::call
 
 // this one return directly the embed for the underlying type
-#define N_CT_CONSTRUCTOR_CALL_EMBED(ObjectType, ...)    N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, __VA_ARGS__)::template embed<ObjectType>
+#define N_CT_CONSTRUCTOR_CALL_EMBED(ObjectType, ...)    N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ##__VA_ARGS__)::template embed<ObjectType>
 // and for the cr_embed
-#define N_CT_CONSTRUCTOR_CALL_CR_EMBED(ObjectType, ...) N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, __VA_ARGS__)::template cr_embed<ObjectType>
+#define N_CT_CONSTRUCTOR_CALL_CR_EMBED(ObjectType, ...) N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ##__VA_ARGS__)::template cr_embed<ObjectType>
+// and for the placement new
+#define N_CT_CONSTRUCTOR_CALL_PLACEMENT(ObjectType, ...)    N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ##__VA_ARGS__)::placement
 
 // this one return directly the underlying type (the constructor::call casted to the underlying type)
-#define N_CT_CONSTRUCTOR_CALL(ObjectType, ...)          static_cast<ObjectType>(N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, __VA_ARGS__)())
+#define N_CT_CONSTRUCTOR_CALL(ObjectType, ...)          static_cast<ObjectType>(N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ##__VA_ARGS__)())
 
 // for some similarity with neam::embed:
-#define N_EMBED_OBJECT(ObjectType, ...)                 N_CT_CONSTRUCTOR_CALL_EMBED(ObjectType, __VA_ARGS__)
-#define N_CR_EMBED_OBJECT(ObjectType, ...)              N_CT_CONSTRUCTOR_CALL_CR_EMBED(ObjectType, __VA_ARGS__)
+#define N_EMBED_OBJECT(ObjectType, ...)                 N_CT_CONSTRUCTOR_CALL_EMBED(ObjectType, ##__VA_ARGS__)
+#define N_CR_EMBED_OBJECT(ObjectType, ...)              N_CT_CONSTRUCTOR_CALL_CR_EMBED(ObjectType, ##__VA_ARGS__)
+
+// for simple usage with neam::cr::persistence
+#define N_CALL_CONSTRUCTOR(ObjectType, ...)             N_CT_CONSTRUCTOR_CALL_PLACEMENT(ObjectType, ##__VA_ARGS__)
 
   } // namespace ct
 } // namespace neam

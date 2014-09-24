@@ -215,7 +215,7 @@ namespace neam
         constexpr cr::bad_type get() const
         {
           static_assert(!(Index + 1), "tuple<>::get() on an empty tuple.");
-          return cr::bad_type(cr::bad_type::construct_from_return);
+          return cr::bad_type(cr::bad_type::construct_from_return());
         }
 
         constexpr static size_t size()

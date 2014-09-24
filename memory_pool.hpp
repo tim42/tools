@@ -33,7 +33,15 @@ namespace neam
 {
   namespace cr
   {
-    // ObjectCount is the number of object per chunk.
+    /// \brief this class provide a fast and easy way to deal with 
+    /// \param ObjectType is the type of object stored in the pool
+    /// \param ObjectCount is the number of object per chunk.
+    ///
+    /// \attention This pool is oversimplified. Some allocation schemes won't be optimal at all...
+    /// an optimal use would be that after a short initialization phase, the number
+    /// of elements allocated remain almost always the same
+    ///
+    /// \note the memory is held until someone call \e clear or the pool is destructed.
     template<typename ObjectType, size_t ObjectCount = 420>
     class memory_pool
     {
@@ -200,6 +208,16 @@ namespace neam
             // get slot and chunk
             allocation_slot *slot = allocation_slot::get_slot(p);
 
+
+//          // ATTENTION: commented out because:
+//          //            - this would lead to an extra memory consumption (every slot needs to store its offset from the start of the chunk)
+//          //            - this would be extremely slow as when the chunk will be removed, you need to go through all the list of free
+//          //              allocation_slot to remove the ones that belongs to the removed chunk
+//          //              NOTE: (this could be avoided by storing a per chunk list of free slots and having a list of chunks with non-empty free slots list...)
+//          //                    (and this wouldn't have a so big impact on the perfs (there would be no loops, if you store a prev and a next pointer per chunk for the free list ;) ))
+//          //                    (maybe one day when I will have the time...)
+//
+//
 //             if (!(--chk->object_count)) // free the chunk, do not push slot into free slots
 //             {
 //               if (chk->prev)
