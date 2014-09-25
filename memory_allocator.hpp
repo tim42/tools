@@ -285,7 +285,7 @@ namespace neam
         };
 
       private:
-        constexpr static size_t chunk_size = 4096;
+        constexpr static size_t chunk_size = 8192;
 
       private:
         memory_chunk *first = nullptr;
