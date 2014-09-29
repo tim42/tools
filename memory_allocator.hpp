@@ -31,21 +31,37 @@
 #include <cstddef>
 #include <cstring>
 
+
 namespace neam
 {
   namespace cr
   {
     /// \brief a chunked memory pool that can produce contiguous output.
+    /// \note if an allocation size is < sizeof(uint64_t), then you could assume the allocation will never fail:
+    ///       if the allocation fails, the function return a pointer to a valid area (an internal field) and set the \e failed flag to true.
+    ///       so allocation of very small size will alway give a valid pointer.
     class memory_allocator
     {
       public:
         memory_allocator()
         {
+          failed = false;
         }
 
         ~memory_allocator()
         {
           clear();
+        }
+
+        /// \brief return whether or not an allocation has failed.
+        bool has_failed() const
+        {
+          return failed;
+        }
+
+        void clear_failed()
+        {
+          failed = false;
         }
 
         /// \brief allocate \e count bytes at the end of the pool
@@ -54,12 +70,20 @@ namespace neam
         {
           if (!first || last->end_offset + count > last->size) // allocate a chunk (no chunk or no place in the last chunk)
           {
-            memory_chunk *nchk = new memory_chunk;
-            nchk->size = count > chunk_size ? count : chunk_size;
-            nchk->data = reinterpret_cast<uint8_t *>(operator new(nchk->size, std::nothrow));
-            if (!nchk->data)
+            memory_chunk *nchk = new(std::nothrow) memory_chunk;
+            if (nchk)
             {
+              nchk->size = count > chunk_size ? count : chunk_size;
+              nchk->data = reinterpret_cast<uint8_t *>(operator new(nchk->size, std::nothrow));
+            }
+            if (!nchk || !nchk->data)
+            {
+              failed = true;
               delete nchk;
+
+              // never fail for small allocations
+              if (count <= sizeof(fallback_small))
+                return &fallback_small;
               return nullptr;
             }
 
@@ -92,12 +116,21 @@ namespace neam
         {
           if (!first || first->start_offset < count) // allocate a chunk (no chunk or no place left in the first chunk)
           {
-            memory_chunk *nchk = new memory_chunk;
-            nchk->size = count > chunk_size ? count : chunk_size;
-            nchk->data = reinterpret_cast<uint8_t *>(operator new(nchk->size, std::nothrow));
-            if (!nchk->data)
+            memory_chunk *nchk = new(std::nothrow) memory_chunk;
+            if (nchk)
             {
+              nchk->size = count > chunk_size ? count : chunk_size;
+              nchk->data = reinterpret_cast<uint8_t *>(operator new(nchk->size, std::nothrow));
+            }
+            if (!nchk || !nchk->data)
+            {
+              failed = true;
               delete nchk;
+
+              // never fail for small allocations
+              if (count <= sizeof(fallback_small))
+                return &fallback_small;
+
               return nullptr;
             }
 
@@ -258,6 +291,7 @@ namespace neam
           first = nullptr;
           last = nullptr;
           pool_size = 0;
+          failed = false;
         }
 
         /// \brief return the size of the pool
@@ -291,6 +325,8 @@ namespace neam
         memory_chunk *first = nullptr;
         memory_chunk *last = nullptr;
         size_t pool_size = 0;
+        bool failed = false;
+        uint64_t fallback_small;
     };
   } // namespace cr
 } // namespace neam
