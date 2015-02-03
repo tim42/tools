@@ -62,7 +62,7 @@ double neam::cr::stream_logger::get_time() const
 neam::cr::multiplexed_stream &neam::cr::stream_logger::get_log_header(stream_logger &logger, const std::string &level)
 {
   std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
-  return logger.streams << internal::locker << "[" << std::setw(14) << std::setfill(' ') << std::fixed << std::setprecision(6) << std::chrono::duration_cast<std::chrono::microseconds>(now - logger.launch_time).count() / 1000000.0f << "] "
+  return logger.streams << internal::locker << "[" << std::setw(14) << std::setfill(' ') << std::fixed << std::setprecision(6) << std::right << std::chrono::duration_cast<std::chrono::microseconds>(now - logger.launch_time).count() / 1000000.0f << "] "
          << std::left << std::setw(14) << std::setfill(' ') << logger.name
          << ": " << std::left << std::setw(8) <<  std::setfill(' ') << level << " -- ";
 }
