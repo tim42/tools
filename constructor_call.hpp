@@ -127,6 +127,11 @@ namespace neam
           {
             new (ptr) ObjectType(Values::get()...);
           }
+          template<typename Ret, typename... Params>
+          static inline void forward_to(ObjectType *ptr, Ret(ObjectType::*member_ptr)(Params...))
+          {
+            (ptr->*member_ptr)(Values::get()...);
+          }
           using type = ObjectType;
         };
       };
