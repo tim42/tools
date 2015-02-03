@@ -32,6 +32,10 @@
 #include <tools/macro.hpp>
 #include <tools/demangle.hpp>
 
+//
+// NOTE: you can define the macro N_DEBUG_USE_CERR to use std::cerr instead of neam::cr::out
+//
+
 namespace neam
 {
   // the base neam exception class
@@ -72,14 +76,23 @@ namespace neam
 //
 // some default catch macros
 //
-#define N_PRINT_EXCEPTION(e)            std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": catched exception  '" << e.what() << "'" << std::endl
-#define N_PRINT_UNKNOW_EXCEPTION        std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": catched unknow exception..." << std::endl
-#define N_CATCH_ACTION(x)               catch(std::exception &e) { N_PRINT_EXCEPTION(e); x; } catch(...) { N_PRINT_UNKNOW_EXCEPTION; x; }
+#ifdef N_DEBUG_USE_CERR
+# define N_PRINT_EXCEPTION(e)            std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": catched exception  '" << e.what() << "'" << std::endl
+# define N_PRINT_UNKNOW_EXCEPTION        std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": catched unknow exception..." << std::endl
+# define N_CATCH_ACTION(x)               catch(std::exception &e) { N_PRINT_EXCEPTION(e); x; } catch(...) { N_PRINT_UNKNOW_EXCEPTION; x; }
+#else
+# define N_PRINT_EXCEPTION(e)            neam::cr::out.error() << LOGGER_INFO << "catched exception  '" << e.what() << "'" << std::endl
+# define N_PRINT_UNKNOW_EXCEPTION        neam::cr::out.error() << LOGGER_INFO << "catched unknow exception..." << std::endl
+# define N_CATCH_ACTION(x)               catch(std::exception &e) { N_PRINT_EXCEPTION(e); x; } catch(...) { N_PRINT_UNKNOW_EXCEPTION; x; }
+#endif
 #define N_CATCH                         N_CATCH_ACTION( )
 
 // a verbose abort
-#define N_ABORT                         do {std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": [aborting program]\n" << std::endl; std::cerr.flush(); abort();} while(0)
-
+#ifdef N_DEBUG_USE_CERR
+# define N_ABORT                         do {std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": [aborting program]\n" << std::endl; std::cerr.flush(); abort();} while(0)
+#else
+# define N_ABORT                         do {neam::cr::out.error() << LOGGER_INFO << "[aborting program]\n" << std::endl; abort();} while(0)
+#endif
 // fatal exception (call abort)
 #define N_FATAL_CATCH                   N_CATCH_ACTION(N_ABORT)
 #define N_FATAL_CATCH_ACTION(x)         N_CATCH_ACTION({x;N_ABORT;})

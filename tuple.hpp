@@ -32,8 +32,8 @@
 
 #include <cstdint>
 
-#include <tools/genseq.hpp>
-#include <tools/bad_type.hpp>
+#include "genseq.hpp"
+#include "bad_type.hpp"
 
 namespace neam
 {

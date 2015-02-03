@@ -41,7 +41,7 @@ namespace neam
     /// an optimal use would be that after a short initialization phase, the number
     /// of elements allocated remain almost always the same
     ///
-    /// \note the memory is held until someone call \e clear or the pool is destructed.
+    /// \note the memory is held until someone call \e clear() or until the pool is destructed.
     template<typename ObjectType, size_t ObjectCount = 420>
     class memory_pool
     {

@@ -26,9 +26,7 @@
 #ifndef __N_99570474794081008_1534814754__EXECUTE_PACK_HPP__
 # define __N_99570474794081008_1534814754__EXECUTE_PACK_HPP__
 
-// do you see THIS ??
-// THIS IS THE TRUE (AHEM... ALMOST.) POWER.
-//
+
 // this execute 'instr' for each value in the pack (instr must depends of an variadic template / argument pack)
 // The compiler is smart enought to just remove the array and keep the calls. (and inlining thems, if possible).
 // So this produce no overhead !! :) (and avoid a recursive proxy function).

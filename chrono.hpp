@@ -38,20 +38,20 @@ namespace neam
       public:
         chrono() : old_time(now()), speed(1) {}
 
-        // unix time
+        /// \brief time since epoch
         static double now()
         {
           return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count() * 1e-9;
         }
 
-        // relative to the first call (could be the effective start of the prog)
+        /// \brief time relative to the first call (could be the effective start of the prog)
         static double now_relative()
         {
           static double start = now();
           return now() - start;
         }
 
-        // return the delta time between the last call and now()
+        /// \brief return the delta time between the last call and now()
         double delta()
         {
           const double right_now = now();
@@ -60,7 +60,7 @@ namespace neam
           return dt * speed;
         }
 
-        // accumulate time (act like delta, but do not change the old_time)
+        /// \brief accumulate time (act like delta, but do not reset the counter)
         double get_accumulated_time() const
         {
           const double right_now = now();
@@ -68,19 +68,19 @@ namespace neam
           return dt * speed;
         }
 
-        // reset the old_time to now (do almost the same as calling delta())
+        /// \brief reset the old_time to now (do almost the same as calling delta())
         void reset()
         {
           old_time = now();
         }
 
-        // set the speed factor of the timer
+        /// \brief set the speed factor of the timer
         void set_speed(double _speed)
         {
           speed = _speed;
         }
 
-        // get the speed factor of the timer
+        /// \brief get the speed factor of the timer
         double get_speed() const
         {
           return speed;

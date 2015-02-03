@@ -13,12 +13,7 @@
 
 namespace neam
 {
-  // I do like classes without constructors :D
-  //
-  //
-  // I also do like comment unrelated with the class functionnality :)
-  //
-  // Also, compatible with std::lock_guard (--> '<neam::spinlock>').
+  /// \brief a simple spinlock class
   class spinlock
   {
     public:
