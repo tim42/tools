@@ -7,9 +7,9 @@ Some are creepy, ugly (like `embed` or `execute_pack`) while other are really wo
 
 ## list of tools included
 
-**NOTE:** on `cr` et `ct`: `ct` is for tools with _only_ a compile time component,
+**NOTE:** on `cr` et `ct`: `ct` is for tools with _only_ a compile time components,
 (the only exceptions being `contructor::call` that also perform placement new (but is in `ct` because of its similarity / complementarity with `ct::embed`)
-and `cr::tuple` which is in `cr`... until I move it from here).
+and `cr::tuple` which is in `cr`... until I move it from here / remove it).
 
 - `cr::array_wrapper<Type>`: a simple wrapper for arrays (provides a `Type *array` and a `size_t size` properties)
 - `ct::embed`: a way to embed values as type
@@ -25,8 +25,8 @@ and `cr::tuple` which is in `cr`... until I move it from here).
 - `cr::memory_pool`: a really simple (and yet unfinished) memory allocation pool. The current implementation is simple but fast.
 - `ownership`: types and instance for using a ownership resource management pattern. (see ownership.hpp for more information)
 
+- `neam::cr::stream_logger`: a threadsafe, multi-stream logger
 - `neam::debug`: (see the file debug/assert.hpp) a simple assertion/debug mechanism with an extensible code-to-error system (currently support openCL and UNIX errors codes)
-
 
 ## author
 Timothée Feuillet (_neam_ or _tim42_).
