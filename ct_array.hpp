@@ -26,6 +26,8 @@
 #ifndef __N_14558597131808588598_248435571__CT_ARRAY_HPP__
 # define __N_14558597131808588598_248435571__CT_ARRAY_HPP__
 
+#include <cstddef>
+
 namespace neam
 {
   namespace ct
@@ -89,10 +91,6 @@ namespace neam
       // the CT data
       static constexpr Type data[sizeof...(Values)] = {Values...};
     };
-
-    template<typename Type, Type... Values>
-    constexpr Type array<Type, Values...>::data[sizeof...(Values)];
-
   } // namespace ct
 } // namespace neam
 

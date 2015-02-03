@@ -26,7 +26,11 @@
 #ifndef __N_1744658631925022054_1134258981__ASSERT_HPP__
 # define __N_1744658631925022054_1134258981__ASSERT_HPP__
 
-#include <tools/exception.hpp>
+#include "../exception.hpp"
+
+#ifndef N_DEBUG_USE_CERR
+# include "../logger/logger.hpp"
+#endif
 
 #include <string>
 
@@ -42,6 +46,7 @@
 // NOTE: you could define N_DISABLE_DEBUG to completly disable debugging.
 //       you could define N_DISABLE_ASSERTS to disable asserts.
 //       you could define N_DISABLE_FNC_CHECKS to disable function checks.
+//       you could define N_DEBUG_USE_CERR to output only (and directly) to std::cerr
 //
 
 namespace neam
@@ -49,11 +54,11 @@ namespace neam
   namespace debug
   {
     // set this to true to active debug
-    namespace setup
+    namespace config
     {
-      bool debug = false;
-      size_t column_width = 200;
-    } // namespace setup
+      extern bool debug = false;
+      extern size_t column_width = 200;
+    } // namespace config
 
     template<template<typename ErrorType> class ErrorClass>
     class on_error
@@ -62,16 +67,25 @@ namespace neam
         class assert{};
         class function_check {};
 
+        on_error() = delete;
+        on_error(const on_error &) = delete;
+
       public:
         template<typename ReturnType>
         static ReturnType &&_throw_exception(const std::string &func_call, ReturnType &&ret)
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
-          if (setup::debug || is_error)
+          if (config::debug || is_error)
           {
             std::string message = get_message(func_call, ret);
+#ifdef N_DEBUG_USE_CERR
             std::cerr << ((is_error) ? " ** " : " -- ") << message << std::endl;
-
+#else
+            if (is_error)
+              neam::cr::out.error() << " ** " << neam::cr::internal::end_header << message << std::endl;
+            else
+              neam::cr::out.debug() << " -- " << neam::cr::internal::end_header << message << std::endl;
+#endif
             if (is_error)
               throw typed_exception<ErrorClass<ReturnType>>(message);
           }
@@ -83,10 +97,17 @@ namespace neam
         static bool _log_and_check(const std::string &func_call, ReturnType &&ret)
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
-          if (setup::debug || is_error)
+          if (config::debug || is_error)
           {
             std::string message = get_message(func_call, ret);
+#ifdef N_DEBUG_USE_CERR
             std::cerr << ((is_error) ? " ** " : " -- ") << message << std::endl;
+#else
+            if (is_error)
+              neam::cr::out.error() << " ** " << neam::cr::internal::end_header << message << std::endl;
+            else
+              neam::cr::out.debug() << " -- " << neam::cr::internal::end_header << message << std::endl;
+#endif
 
             if (is_error)
               return false;
@@ -100,19 +121,33 @@ namespace neam
         static ReturnType &&_log_and_return(const std::string &func_call, ReturnType &&ret)
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
-          if (setup::debug || is_error)
+          if (config::debug || is_error)
           {
             std::string message = get_message(func_call, ret);
+#ifdef N_DEBUG_USE_CERR
             std::cerr << ((is_error) ? " ** " : " -- ") << message << std::endl;
+#else
+            if (is_error)
+              neam::cr::out.error() << " ** " << neam::cr::internal::end_header << message << std::endl;
+            else
+              neam::cr::out.debug() << " -- " << neam::cr::internal::end_header << message << std::endl;
+#endif
           }
           return std::move(ret);
         }
 
         static void _assert(const std::string &test, bool status, const std::string message)
         {
-          if (setup::debug || !status)
+          if (config::debug || !status)
           {
-            std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(setup::column_width) << std::setfill('.') << (neam::demangle<assert>() + ": " + test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
+#ifdef N_DEBUG_USE_CERR
+            std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(config::column_width) << std::setfill('.') << (neam::demangle<assert>() + ": " + test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
+#else
+            if (!status)
+              neam::cr::out.error() << " ** " << neam::cr::internal::end_header << std::left << std::setw(config::column_width) << std::setfill('.') << (neam::demangle<_assert>() + ": " + test + " ") << "[FAILED]: " + message << std::endl;
+            else
+              neam::cr::out.debug() << " -- " << neam::cr::internal::end_header << std::left << std::setw(config::column_width) << std::setfill('.') << (neam::demangle<_assert>() + ": " + test + " ") << " [SUCCESS]" << std::endl;
+#endif
             if (!status)
               throw typed_exception<on_error>(test + ": assert failed: " + message);
           }
@@ -120,8 +155,17 @@ namespace neam
 
         static bool _assert_and_return(const std::string &test, bool status, const std::string message)
         {
-          if (setup::debug || !status)
-            std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(setup::column_width) << std::setfill('.') << (neam::demangle<assert>() + ": " + test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
+          if (config::debug || !status)
+          {
+#ifdef N_DEBUG_USE_CERR
+            std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(config::column_width) << std::setfill('.') << (neam::demangle<assert>() + ": " + test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
+#else
+            if (!status)
+              neam::cr::out.error() << " ** " << neam::cr::internal::end_header << std::left << std::setw(config::column_width) << std::setfill('.') << (neam::demangle<_assert_and_return>() + ": " + test + " ") << "[FAILED]: " + message << std::endl;
+            else
+              neam::cr::out.debug() << " -- " << neam::cr::internal::end_header << std::left << std::setw(config::column_width) << std::setfill('.') << (neam::demangle<_assert_and_return>() + ": " + test + " ") << " [SUCCESS]" << std::endl;
+#endif
+          }
           return !status;
         }
 
@@ -132,31 +176,31 @@ namespace neam
         }
 
 #if not defined N_DISABLE_ASSERTS and not defined N_DISABLE_DEBUG
-#define assert(test, message)                   _assert(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #test, test, message)
-#define assert_exp(test, message)               assert(test, message)
-#define assert_and_return(test, message)        _assert_and_return(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #test, test, message)
-#define assert_and_return_exp(test, message)    assert_and_return(test, message)
+#define n_assert(test, message)                   _assert(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #test, test, message)
+#define n_assert_exp(test, message)               assert(test, message)
+#define n_assert_and_return(test, message)        _assert_and_return(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #test, test, message)
+#define n_assert_and_return_exp(test, message)    assert_and_return(test, message)
 #else
-#define assert(test, message)                   _dummy(((test), true))
-#define assert_exp(test, message)               assert(test, message)
-#define assert_and_return(test, message)        _dummy(((test), true))
-#define assert_and_return_exp(test, message)    assert_and_return(test, message)
+#define n_assert(test, message)                   _dummy(((test), true))
+#define n_assert_exp(test, message)               assert(test, message)
+#define n_assert_and_return(test, message)        _dummy(((test), true))
+#define n_assert_and_return_exp(test, message)    assert_and_return(test, message)
 #endif
 
 #if not defined N_DISABLE_FNC_CHECKS and not defined N_DISABLE_DEBUG
-# define throw_exception(fnc)                   _throw_exception(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #fnc, fnc)
-# define throw_exception_exp(fnc)               throw_exception(fnc)
-# define log_and_check(fnc)                     _log_and_check(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #fnc, fnc)
-# define log_and_check_exp(fnc)                 log_and_check(fnc)
-# define log_and_return(fnc)                    _log_and_return(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #fnc, fnc)
-# define log_and_return_exp(fnc)                log_and_return(fnc)
+# define n_throw_exception(fnc)                   _throw_exception(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #fnc, fnc)
+# define n_throw_exception_exp(fnc)               throw_exception(fnc)
+# define n_log_and_check(fnc)                     _log_and_check(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #fnc, fnc)
+# define n_log_and_check_exp(fnc)                 log_and_check(fnc)
+# define n_log_and_return(fnc)                    _log_and_return(__FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": " #fnc, fnc)
+# define n_log_and_return_exp(fnc)                log_and_return(fnc)
 #else
-# define throw_exception(fnc)                   _dummy(fnc)
-# define throw_exception_exp(fnc)               _dummy(fnc)
-# define log_and_return(fnc)                    _dummy(fnc)
-# define log_and_return_exp(fnc)                _dummy(fnc)
-# define log_and_check(fnc)                     _dummy(fnc)
-# define log_and_check_exp(fnc)                 _dummy(fnc)
+# define n_throw_exception(fnc)                   _dummy(fnc)
+# define n_throw_exception_exp(fnc)               _dummy(fnc)
+# define n_log_and_return(fnc)                    _dummy(fnc)
+# define n_log_and_return_exp(fnc)                _dummy(fnc)
+# define n_log_and_check(fnc)                     _dummy(fnc)
+# define n_log_and_check_exp(fnc)                 _dummy(fnc)
 #endif
 
       private:
@@ -170,10 +214,10 @@ namespace neam
             const std::string code_name = ErrorClass<ReturnType>::get_code_name(code);
             const std::string description = ErrorClass<ReturnType>::get_description(code);
 
-            is << std::left << std::setw(setup::column_width) << std::setfill('.') << (neam::demangle<function_check>() + ": " +  func_call + " ") << " [" << code_name << "]: " << description;
+            is << std::left << std::setw(config::column_width) << std::setfill('.') << (neam::demangle<function_check>() + ": " +  func_call + " ") << " [" << code_name << "]: " << description;
           }
           else
-            is << std::left << std::setw(setup::column_width) << std::setfill('.') << (neam::demangle<function_check>() + ": " + func_call + " ") << " [code: " << code << "]: [UNKNOW ERROR CODE]";
+            is << std::left << std::setw(config::column_width) << std::setfill('.') << (neam::demangle<function_check>() + ": " + func_call + " ") << " [code: " << code << "]: [UNKNOW ERROR CODE]";
           return is.str();
         }
     };

@@ -26,8 +26,10 @@
 #ifndef __N_48888409651922371_1596013433__CT_LIST_HPP__
 # define __N_48888409651922371_1596013433__CT_LIST_HPP__
 
-#include <tools/type_at_index.hpp>
-#include <tools/tuple.hpp>
+#include <memory>
+
+#include "type_at_index.hpp"
+#include "tuple.hpp"
 
 namespace neam
 {

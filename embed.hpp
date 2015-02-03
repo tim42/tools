@@ -67,10 +67,6 @@ namespace neam
         static constexpr EmbeddedType value __attribute__((deprecated)) = Value;
     };
 
-    template<typename EmbeddedType, EmbeddedType Value>
-    constexpr EmbeddedType embed<EmbeddedType, Value>::value;
-
-
     // some internal things
     namespace internal
     {

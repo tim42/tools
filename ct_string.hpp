@@ -39,7 +39,7 @@ namespace neam
     static constexpr size_t npos = static_cast<size_t>(-1);
 
     // strlen function
-    constexpr size_t strlen(const char *str)
+    inline static constexpr size_t strlen(const char *str)
     {
       return str[0] ? ct::strlen(str + 1) + 1 : 0;
     }
@@ -119,124 +119,6 @@ namespace neam
         static constexpr size_t start_index = Start;
         static constexpr size_t end_index = End;
     };
-
-    // string set (could also be a string set of string AND string sets)
-    // and everytypes that define the used operators and static vars constexpr
-    // they are:
-    //  - length (type: size_t)
-    //  - char operator[](size_t)
-    //  - a default constructor
-#ifndef __clang__
-    template<size_t Start, size_t End, typename... StringSet>
-    class string_set
-    {
-      private: //helpers
-        // operator [] helper
-        template <size_t Unused>
-        static constexpr char get_char_at_index(size_t)
-        {
-          return (0);
-        }
-        template <size_t Unused, typename CurrentStr, typename... Others>
-        static constexpr char get_char_at_index(size_t index)
-        {
-          return (index > End ? 0 : (index < CurrentStr::length ? ((CurrentStr()) [index]) : (get_char_at_index<0, Others...> (index - CurrentStr::length))));
-        }
-
-        // comparison func
-        template<typename T>
-        constexpr bool is_same(const T &o, size_t index = 0) const
-        {
-          return ((*this)[index] == o[index] ? ((*this)[index] ? is_same(o, index + 1) : true) : false);
-        }
-
-      public: // funcs
-        constexpr string_set() {}
-        ~string_set() {}
-
-        constexpr char operator[](size_t index) const
-        {
-          return get_char_at_index<0, StringSet...>(index + Start);
-        }
-
-        template<typename T>
-        constexpr bool operator == (const T &o) const
-        {
-          return is_same(o);
-        }
-        template<typename T>
-        constexpr bool operator != (const T &o) const
-        {
-          return !(*this == o);
-        }
-
-      private: //helpers
-        template <size_t Unused>
-        static constexpr size_t compute_length()
-        {
-          return 0;
-        }
-        template <size_t Unused, typename CurrentStr, typename... Others>
-        static constexpr size_t compute_length()
-        {
-          return CurrentStr::length + compute_length<0, Others...>();
-        }
-        // uniform length computation for substrings
-        static constexpr size_t length_recalc(size_t len)
-        {
-          return (len < Start ? 0 : (len > End ? (End - Start) : (len - Start)));
-        }
-
-      public: // vars
-        static constexpr size_t length = length_recalc(compute_length<Start, StringSet...>()); // length of the strings
-        static constexpr size_t start_index = Start;
-        static constexpr size_t end_index = End;
-    };
-
-    // substring operation
-    // for strings
-    template <size_t NewStart = 0, size_t NewEnd = npos, const char *Str, size_t Start, size_t End>
-    constexpr auto substring(const string<Str, Start, End> &) -> string<Str, NewStart, NewEnd>
-    {
-      return string<Str, NewStart, NewEnd>();
-    }
-    // for string_sets
-    template <size_t NewStart = 0, size_t NewEnd = npos, size_t Start, size_t End, typename... Type>
-    constexpr auto substring(const string_set<Start, End, Type...> &) -> string_set<NewStart, NewEnd, Type...>
-    {
-      return string_set<NewStart, NewEnd, Type...>();
-    }
-
-    // operators +
-
-    // string + string
-    template <const char *Str1, size_t Start1, size_t End1, const char *Str2, size_t Start2, size_t End2>
-    constexpr string_set<0, npos, string<Str1, Start1, End1>, string<Str1, Start1, End1>> operator +(const string<Str1, Start1, End1> &, const string<Str2, Start2, End2> &)
-    {
-      return string_set<0, npos, string<Str1, Start1, End1>, string<Str1, Start1, End1>>();
-    }
-
-    // string + string_set
-    template <const char *Str1, size_t Start1, size_t End1, typename... Type2>
-    constexpr string_set<0, npos, string<Str1, Start1, End1>, string_set<Type2...>> operator +(const string<Str1, Start1, End1> &, const string_set<Type2...> &)
-    {
-      return string_set<0, npos, string<Str1, Start1, End1>, string_set<Type2...>>();
-    }
-
-    // string_set + string
-    template <const char *Str1, size_t Start1, size_t End1, typename... Type2>
-    constexpr string_set<0, npos, string_set<Type2...>, string<Str1, Start1, End1>> operator +(const string_set<Type2...> &, const string<Str1, Start1, End1> &)
-    {
-      return string_set<0, npos, string_set<Type2...>, string<Str1, Start1, End1>>();
-    }
-
-    // string_set + string_set
-    template <typename... Type1, typename... Type2>
-    constexpr string_set<0, npos, string_set<Type1...>, string_set<Type2...>> operator +(const string_set<Type1...> &, const string_set<Type2...> &)
-    {
-      return string_set<0, npos, string_set<Type1...>, string_set<Type2...>>();
-    }
-#endif /*__clang__*/
   } // namespace ct
 } // namespace neam
 
