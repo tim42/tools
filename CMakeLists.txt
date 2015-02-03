@@ -9,9 +9,11 @@ set(PROJ_VERSION_MAJOR 0)
 set(PROJ_VERSION_MINOR 1)
 set(PROJ_VERSION_SUPERMINOR 1)
 
-add_definitions(-D_PROJ_VERSION_MAJOR=${PROJ_VERSION_MAJOR})
-add_definitions(-D_PROJ_VERSION_MINOR=${PROJ_VERSION_MINOR})
-add_definitions(-D_PROJ_VERSION_SUPERMINOR=${PROJ_VERSION_SUPERMINOR})
+if (${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME})
+  add_definitions(-D_PROJ_VERSION_MAJOR=${PROJ_VERSION_MAJOR})
+  add_definitions(-D_PROJ_VERSION_MINOR=${PROJ_VERSION_MINOR})
+  add_definitions(-D_PROJ_VERSION_SUPERMINOR=${PROJ_VERSION_SUPERMINOR})
+endif()
 
 set(PROJ_VERSION_NAME "")
 
@@ -79,8 +81,6 @@ endif()
 add_definitions(${PROJ_FLAGS})
 
 set(PROJ_SOURCES  logger/logger.cpp
-                  ct_array.cpp
-                  embed.cpp
                   
 )
 add_library(${PROJ_APP} STATIC ${PROJ_SOURCES})

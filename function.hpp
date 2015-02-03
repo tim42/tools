@@ -82,10 +82,10 @@ namespace neam
     {
       static_assert(sizeof...(FuncArgList) == sizeof...(ArgList), "the number of supplied argument does not match the function's arity");
 
-      constexpr _sub_function_wrapper(ArgList... values)
-      
-      {
-      }
+//       constexpr _sub_function_wrapper(ArgList... values)
+//       
+//       {
+//       }
     };
 
     // /// ///

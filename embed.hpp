@@ -51,7 +51,7 @@ namespace neam
         {
           return value;
         }
-        constexpr operator EmbeddedType ()
+        constexpr operator EmbeddedType () const
         {
           return Value;
         }
@@ -64,8 +64,10 @@ namespace neam
 
       public:
         using type = EmbeddedType;
-        static constexpr EmbeddedType value __attribute__((deprecated)) = Value;
+        static constexpr EmbeddedType value = Value;
     };
+    template<typename EmbeddedType, EmbeddedType Value>
+    constexpr EmbeddedType embed<EmbeddedType, Value>::value;
 
     // some internal things
     namespace internal

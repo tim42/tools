@@ -39,15 +39,15 @@ namespace neam
     namespace internal
     {
       /// \brief lock the internal mutex, begin the header
-      static const struct _locker {} locker __attribute__((unused));
+      static constexpr struct _locker {constexpr _locker(){}} locker __attribute__((unused));
 
       /// \brief end the header (the header wil be repeated each time a neam::r::newline is send)
-      static const struct _end_header {} end_header __attribute__((unused));
+      static constexpr struct _end_header {constexpr _end_header(){}} end_header __attribute__((unused));
 
     } // namespace internal
 
     /// \brief append a newline to the streams and repeat the line header.
-    static const struct _newline {} newline __attribute__((unused));
+    static constexpr struct _newline {constexpr _newline(){}} newline __attribute__((unused));
 
     /// \brief multiplexing output stream (only for the << operator).
     /// This class also allow thread safe line output.

@@ -31,7 +31,7 @@
 namespace neam
 {
   // use this as 'constexpr string_t myvar = "blablabla";'
-  using string_t = char[];
+  using string_t = char [];
 
   namespace ct
   {

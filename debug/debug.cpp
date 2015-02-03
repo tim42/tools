@@ -16,6 +16,8 @@
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 //
 
+#include <cstddef>
+
 namespace neam
 {
   namespace debug
@@ -23,8 +25,8 @@ namespace neam
     // set this to true to active debug
     namespace config
     {
-      bool debug = false;
-      size_t column_width = 200;
+      bool debug __attribute__((unused)) = false;
+      size_t column_width  __attribute__((unused)) = 200;
     } // namespace setup
   } // namespace debug
 } // namespace neam

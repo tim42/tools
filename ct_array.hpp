@@ -42,17 +42,17 @@ namespace neam
       }
 
       // access
-      constexpr operator Type *()
+      constexpr operator Type *() const
       {
         return data;
       }
 
-      constexpr operator const Type *()
+      constexpr operator const Type *() const
       {
         return data;
       }
 
-      constexpr const Type &operator [](size_t pos)
+      constexpr const Type &operator [](size_t pos) const
       {
         return data[pos];
       }
@@ -91,6 +91,9 @@ namespace neam
       // the CT data
       static constexpr Type data[sizeof...(Values)] = {Values...};
     };
+
+    template<typename Type, Type... Values>
+    constexpr Type array<Type, Values...>::data[sizeof...(Values)];
   } // namespace ct
 } // namespace neam
 

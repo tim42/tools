@@ -50,14 +50,14 @@ namespace neam
         constexpr call(){}
 
         // cast to ObjectType (by calling the constructor)
-        inline constexpr operator ObjectType()
+        inline constexpr operator ObjectType() const
         {
           return ObjectType(Values::get()...);
         }
 
         // allow cast operators of ObjectType to works within this class
         template<typename T>
-        inline constexpr operator T()
+        inline constexpr operator T() const
         {
           return static_cast<T>(ObjectType(Values::get()...));
         }
@@ -78,11 +78,11 @@ namespace neam
         {
           constexpr embed() {}
 
-          operator EmbeddedType &()
+          operator EmbeddedType &() __attribute__((deprecated))
           {
             return value;
           }
-          constexpr operator EmbeddedType()
+          constexpr operator EmbeddedType() const
           {
             return ObjectType(Values::get()...);
           }

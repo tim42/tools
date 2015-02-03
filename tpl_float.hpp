@@ -53,7 +53,7 @@ namespace neam
         return Exp < 0 ? static_cast<float>(Mantissa) / static_cast<float>(2ll << -Exp) : static_cast<float>(Mantissa) * static_cast<float>(2ll << Exp);
       }
 
-      constexpr operator float()
+      constexpr operator float() const
       {
         return get_val();
       }
@@ -79,7 +79,7 @@ namespace neam
         return Exp < 0 ? static_cast<double>(Mantissa) / static_cast<double>(2ll << -Exp) : static_cast<double>(Mantissa) * static_cast<double>(2ll << Exp);
       }
 
-      constexpr operator double()
+      constexpr operator double() const
       {
         return get_val();
       }
