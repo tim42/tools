@@ -26,6 +26,8 @@
 #ifndef __N_11013861961332692490_320117215__DEMANGLE_HPP__
 # define __N_11013861961332692490_320117215__DEMANGLE_HPP__
 
+#include <string>
+
 #ifndef __has_feature
 #define __has_feature(x) false
 #endif
