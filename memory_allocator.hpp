@@ -43,8 +43,32 @@ namespace neam
     class memory_allocator
     {
       public:
+        /// \brief default constructor
         memory_allocator()
         {
+          failed = false;
+        }
+
+        /// \brief a sub-memory_allocator: manage an allocated area of another memory_allocator
+        /// \param[in,out] fallback is used when the allocated memory is greater than the \p size of the \p area
+        ///                is nullptr, when the user request an allocation of size greater than the remaining area space, the allocation will fail.
+        memory_allocator(void *area, size_t size, memory_allocator *fallback, bool unstack_fallbacks = true)
+
+        {
+          if (unstack_fallbacks)
+          {
+            while (fallback->fallback_allocator)
+              fallback = fallback->fallback_allocator;
+          }
+          fallback_allocator = fallback;
+
+          first = new(std::nothrow) memory_chunk;
+          last = first;
+          first->data = reinterpret_cast<uint8_t *>(area);
+          first->size = size;
+          first->do_not_destroy = true;
+
+          use_fallback = true;
           failed = false;
         }
 
@@ -59,6 +83,7 @@ namespace neam
           return failed;
         }
 
+        /// \brief unset the failed flag
         void clear_failed()
         {
           failed = false;
@@ -70,6 +95,26 @@ namespace neam
         {
           if (!first || last->end_offset + count > last->size) // allocate a chunk (no chunk or no place in the last chunk)
           {
+            if (use_fallback) // shortcut here when we have to use the fallback
+            {
+              last->end_offset = last->size; // make sure we won't allocate anything else.
+              if (!fallback_allocator)
+              {
+                failed = true;
+                if (count <= sizeof(fallback_small))
+                  return &fallback_small;
+                return nullptr;
+              }
+
+              void *ptr = fallback_allocator->allocate(count);
+              if (!ptr)
+              {
+                failed = true;
+                return nullptr;
+              }
+              return ptr;
+            }
+
             memory_chunk *nchk = new(std::nothrow) memory_chunk;
             if (nchk)
             {
@@ -116,6 +161,12 @@ namespace neam
         {
           if (!first || first->start_offset < count) // allocate a chunk (no chunk or no place left in the first chunk)
           {
+            if (use_fallback) // shortcut here when we have to use the fallback
+            {
+              failed = false;
+              return nullptr;
+            }
+
             memory_chunk *nchk = new(std::nothrow) memory_chunk;
             if (nchk)
             {
@@ -178,9 +229,17 @@ namespace neam
             }
             else if (last == first && (last->end_offset - last->start_offset) < count)
             {
-              delete first;
-              first = nullptr;
-              last = nullptr;
+              if (use_fallback)
+              {
+                full_allocator = false;
+                first->end_offset = 0;
+              }
+              else
+              {
+                delete first;
+                first = nullptr;
+                last = nullptr;
+              }
               pool_size = 0;
               return;
             }
@@ -227,6 +286,56 @@ namespace neam
               return;
             }
           }
+        }
+
+        /// \brief makes sure there will be enough contiguous space.
+        /// Don't mark memory as allocated, but can skip the end of a chunk if there isn't enough space.
+        /// \note doesn't set the failed flag is any memory allocation failure occurs.
+        bool preallocate_contiguous(size_t count)
+        {
+          if (use_fallback)
+          {
+            if (last->end_offset + count <= last->size) // already preallocated, already contiguous
+              return true;
+            else // use the fallback, mark the buffer as full, _here will return fallback's _here.
+            {
+              if (!fallback_allocator)
+                return false;
+              last->end_offset = last->size; // make it full (no further allocations will takes place on this allocator)
+              full_allocator = true;
+              return fallback_allocator->preallocate_contiguous(count);
+            }
+          }
+
+          if (!first || last->end_offset + count > last->size) // allocate a chunk (no chunk or no place in the last chunk)
+          {
+            memory_chunk *nchk = new(std::nothrow) memory_chunk;
+            if (nchk)
+            {
+              nchk->size = count > chunk_size ? count : chunk_size;
+              nchk->data = reinterpret_cast<uint8_t *>(operator new(nchk->size, std::nothrow));
+            }
+            if (!nchk || !nchk->data)
+            {
+              delete nchk;
+
+              return false;
+            }
+
+            nchk->end_offset = 0;
+            if (first)
+            {
+              last->next = nchk;
+              nchk->prev = last;
+              last = nchk;
+            }
+            else
+            {
+              first = nchk;
+              last = nchk;
+            }
+          }
+          return true;
         }
 
         /// \brief make the data contiguous.
@@ -300,6 +409,20 @@ namespace neam
           return pool_size;
         }
 
+        /// \brief returns the current pointer.
+        void *_here()
+        {
+          if (full_allocator)
+          {
+            if (fallback_allocator)
+              return fallback_allocator->_here();
+          }
+
+          if (!last)
+            return nullptr;
+          return last->data + last->end_offset;
+        }
+
       private:
         struct memory_chunk
         {
@@ -309,12 +432,15 @@ namespace neam
           size_t end_offset = 0;
           size_t size = 0;
 
+          bool do_not_destroy = false;
+
           memory_chunk *next = nullptr;
           memory_chunk *prev = nullptr;
 
           ~memory_chunk()
           {
-            delete data;
+            if (!do_not_destroy)
+              delete data;
           }
         };
 
@@ -326,7 +452,11 @@ namespace neam
         memory_chunk *last = nullptr;
         size_t pool_size = 0;
         bool failed = false;
-        uint64_t fallback_small;
+        uint64_t fallback_small; ///< \brief used when running out of memory and if the allocated size is lower than
+
+        bool use_fallback = false;
+        memory_allocator *fallback_allocator = nullptr;
+        bool full_allocator = false; ///< \brief _here will return fallback_allocator->_here() or nullptr.
     };
   } // namespace cr
 } // namespace neam

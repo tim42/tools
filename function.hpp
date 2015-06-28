@@ -96,13 +96,20 @@ namespace neam
     struct function_traits
     {
       static constexpr bool is_function = false;
+#ifdef IN_IDE_PARSER
+      static constexpr bool is_member = false;
+      using return_type = void;
+      using ptr_type = void; // not a pointer
+      using arg_list = type_list<>;
+#endif
     };
+
     template<typename FunctionType>
     constexpr bool function_traits<FunctionType>::is_function;
 
     // standard function
     template<typename Return, typename... Parameters>
-    struct function_traits<Return (Parameters...)>
+    struct function_traits<Return(*)(Parameters...)>
     {
       static constexpr bool is_function = true;
       static constexpr bool is_member = false;
@@ -114,9 +121,9 @@ namespace neam
       using create_wrapper = function_wrapper<ptr_type, ptr, Return, /*Class,*/ arg_list>;
     };
     template<typename Return, typename... Parameters>
-    constexpr bool function_traits<Return (Parameters...)>::is_function;
+    constexpr bool function_traits<Return(*)(Parameters...)>::is_function;
     template<typename Return, typename... Parameters>
-    constexpr bool function_traits<Return (Parameters...)>::is_member;
+    constexpr bool function_traits<Return(*)(Parameters...)>::is_member;
 
     // class member function
     template<typename Return, typename Class,typename... Parameters>
