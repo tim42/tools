@@ -35,9 +35,9 @@ namespace neam
   {
     // a sequence generator (doesn't work on some mingw :( )
     // this comes from a stackoverflow answer.
-    template <uint64_t... Idx> struct seq{};
-    template <uint64_t Cr, size_t... Idx> struct gen_seq : gen_seq<Cr - 1, Cr - 1, Idx...> {};
-    template <uint64_t... Idx> struct gen_seq<0, Idx...> : seq<Idx...> {};
+    template <size_t... Idx> struct seq{};
+    template <size_t Cr, size_t... Idx> struct gen_seq : gen_seq<Cr - 1, Cr - 1, Idx...> {};
+    template <size_t... Idx> struct gen_seq<0, Idx...> : seq<Idx...> {};
 
   } // namespace internal
 } // namespace nkark
