@@ -17,6 +17,8 @@ namespace neam
   class spinlock
   {
     public:
+      spinlock() {}
+
       inline void lock()
       {
         while (lock_flag.test_and_set(std::memory_order_acquire));
