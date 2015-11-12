@@ -78,10 +78,10 @@ namespace neam
         {
           constexpr embed() {}
 
-          operator EmbeddedType &() __attribute__((deprecated))
-          {
-            return value;
-          }
+//           operator EmbeddedType &() __attribute__((deprecated))
+//           {
+//             return value;
+//           }
           constexpr operator EmbeddedType() const
           {
             return ObjectType(Values::get()...);
