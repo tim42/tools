@@ -28,6 +28,9 @@
 
 #include <list>
 #include <type_traits>
+#include "memory_pool.hpp"
+
+//#define ALLOCATION_TRANSACTION_USE_POOL
 
 namespace neam
 {
@@ -47,8 +50,13 @@ namespace neam
           for (auto &it: allocation_list)
           {
             it->rollback();
+#ifndef ALLOCATION_TRANSACTION_USE_POOL
             delete it;
+#endif
           }
+#ifdef ALLOCATION_TRANSACTION_USE_POOL
+          pool.clear();
+#endif
           allocation_list.clear();
         }
 
@@ -56,8 +64,12 @@ namespace neam
         /// This have to be called when the transaction is done with success
         void complete()
         {
+#ifndef ALLOCATION_TRANSACTION_USE_POOL
           for (auto &it: allocation_list)
             delete it;
+#else // defined(ALLOCATION_TRANSACTION_USE_POOL)
+          pool.clear();
+#endif
           allocation_list.clear();
         }
 
@@ -66,7 +78,14 @@ namespace neam
         {
           void *ptr = operator new(size, std::nothrow);
           if (ptr)
+          {
+#ifdef ALLOCATION_TRANSACTION_USE_POOL
+            single_allocation_spec<uint8_t> *aptr = pool.allocate();
+            allocation_list.push_front(pool.construct(aptr, reinterpret_cast<uint8_t *>(ptr), false));
+#else
             allocation_list.push_front(new single_allocation_spec<uint8_t>(reinterpret_cast<uint8_t *>(ptr), false));
+#endif
+          }
           return ptr;
         }
 
@@ -86,7 +105,15 @@ namespace neam
         {
           Type *ptr = reinterpret_cast<Type *>(operator new(sizeof(Type), std::nothrow));
           if (ptr)
-            allocation_list.push_front(new single_allocation_spec<Type>(ptr, false));
+          {
+#ifdef ALLOCATION_TRANSACTION_USE_POOL
+            single_allocation_spec<Type> *aptr = reinterpret_cast<single_allocation_spec<Type> *>(pool.allocate());
+            new (aptr) single_allocation_spec<Type>(ptr, std::is_array<Type>::value);
+            allocation_list.push_front(aptr);
+#else
+            allocation_list.push_front(new single_allocation_spec<Type>(ptr, std::is_array<Type>::value));
+#endif
+          }
           return ptr;
         }
 
@@ -94,7 +121,13 @@ namespace neam
         template<typename Type>
         void register_destructor_call_on_failure(Type *ptr)
         {
-          allocation_list.push_front(new single_allocation_spec<Type>(ptr, std::is_array<Type>::value, false));
+#ifdef ALLOCATION_TRANSACTION_USE_POOL
+          single_allocation_spec<Type> *aptr = reinterpret_cast<single_allocation_spec<Type> *>(pool.allocate());
+          new(aptr) single_allocation_spec<Type>(ptr, std::is_array<Type>::value, false);
+          allocation_list.push_front(aptr);
+#else
+            allocation_list.push_front(new single_allocation_spec<Type>(ptr, std::is_array<Type>::value, false));
+#endif
         }
 
       private:
@@ -134,6 +167,9 @@ namespace neam
 
       private:
         std::list<single_allocation *> allocation_list;
+#ifdef ALLOCATION_TRANSACTION_USE_POOL
+        memory_pool<single_allocation_spec<uint8_t>> pool;
+#endif
     };
   } // namespace cr
 } // namespace neam
