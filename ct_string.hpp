@@ -35,13 +35,21 @@ namespace neam
 
   namespace ct
   {
+    namespace internal
+    {
+      // strlen function
+      inline static constexpr size_t strlen(const char *str)
+      {
+        return str[0] ? internal::strlen(str + 1) + 1 : 0;
+      }
+    } // namespace internal
 
     static constexpr size_t npos = static_cast<size_t>(-1);
 
     // strlen function
     inline static constexpr size_t strlen(const char *str)
     {
-      return str[0] ? ct::strlen(str + 1) + 1 : 0;
+      return str ? internal::strlen(str) : 0;
     }
 
     // Compile time string class
