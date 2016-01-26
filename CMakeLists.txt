@@ -78,12 +78,14 @@ elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
 endif()
 
 # build a static lib
-add_definitions(${PROJ_FLAGS})
+if (NOT TARGET ${PROJ_APP})
+  add_definitions(${PROJ_FLAGS})
 
-set(PROJ_SOURCES  logger/logger.cpp
-                  
-)
-add_library(${PROJ_APP} STATIC ${PROJ_SOURCES})
+  set(PROJ_SOURCES  logger/logger.cpp
+                    
+  )
+  add_library(${PROJ_APP} STATIC ${PROJ_SOURCES})
+endif()
 
 # export project name to parent project
 if (NOT ${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME})
