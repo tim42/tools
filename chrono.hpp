@@ -55,22 +55,46 @@ namespace neam
         double delta()
         {
           const double right_now = now();
-          const double dt = right_now - old_time;
+          double dt = right_now - old_time + old_accumulated_time;
+          if (paused)
+            dt = old_accumulated_time;
           old_time = right_now;
+          old_accumulated_time = 0;
           return dt * speed;
         }
 
         /// \brief accumulate time (act like delta, but do not reset the counter)
         double get_accumulated_time() const
         {
+          if (paused)
+            return old_accumulated_time * speed;
           const double right_now = now();
-          const double dt = right_now - old_time;
+          const double dt = right_now - old_time + old_accumulated_time;
           return dt * speed;
         }
 
         /// \brief reset the old_time to now (do almost the same as calling delta())
         void reset()
         {
+          old_time = now();
+          old_accumulated_time = 0;
+        }
+
+        /// \brief pause the chrono
+        void pause()
+        {
+          if (paused)
+            return;
+          paused = true;
+          old_accumulated_time = get_accumulated_time();
+        }
+
+        /// \brief resume a previously paused chrono
+        void resume()
+        {
+          if (!paused)
+            return;
+          paused = false;
           old_time = now();
         }
 
@@ -89,6 +113,8 @@ namespace neam
       private:
         double old_time;
         double speed;
+        double old_accumulated_time = 0;
+        bool paused = false;
     };
   } // namespace cr
 } // namespace neam
