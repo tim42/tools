@@ -38,7 +38,7 @@ namespace neam
     namespace internal
     {
       // strlen function
-      inline static constexpr size_t strlen(const char *str)
+      inline static constexpr size_t strlen(const char *const str)
       {
         return str[0] ? internal::strlen(str + 1) + 1 : 0;
       }
@@ -47,11 +47,11 @@ namespace neam
     static constexpr size_t npos = static_cast<size_t>(-1);
 
     // strlen function
-    inline static constexpr size_t strlen(const char *str)
+    inline static constexpr size_t strlen(const char *const str)
     {
       return str ? internal::strlen(str) : 0;
     }
-
+/*
     // Compile time string class
     // support substring, comparison,
     // casting to char (Except when it's a substring, and when the end is < the length of the string)
@@ -126,7 +126,7 @@ namespace neam
         static constexpr size_t length = compute_length(); // length of the string
         static constexpr size_t start_index = Start;
         static constexpr size_t end_index = End;
-    };
+    };*/
   } // namespace ct
 } // namespace neam
 
