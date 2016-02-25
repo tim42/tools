@@ -27,6 +27,7 @@
 # define __N_48888409651922371_1596013433__CT_LIST_HPP__
 
 #include <memory>
+#include <type_traits>
 
 #include "type_at_index.hpp"
 #include "tuple.hpp"
@@ -35,7 +36,14 @@ namespace neam
 {
   namespace ct
   {
-    // a list of types
+    /// \brief Check if a type is in a list
+    template<typename TypeList, typename Type>
+    struct is_in_list
+    {
+      static constexpr bool value = TypeList::template get_type_index<Type>::index != -1;
+    };
+
+    /// \brief a list of types
     template<typename... Types>
     struct type_list
     {
@@ -53,15 +61,69 @@ namespace neam
           using first = First;
         };
 
+        // conditionally append (can't use the append_type_if in merge_pack.hpp)
+        template <bool Cond, typename Cr, typename Type> struct _append_type_if {};
+        template <typename Cr, typename ...Others>
+        struct _append_type_if<true, Cr, ct::type_list<Others...>> { using type = ct::type_list<Others..., Cr>; };
+        template <typename Cr, typename ...Others>
+        struct _append_type_if<false, Cr, ct::type_list<Others...>> { using type = ct::type_list<Others...>; };
+
+        // filter for uniqueness
+        template<typename List, typename...> struct unique_filter { using type = List; };
+        template<typename List, typename Current, typename... OtherTypes>
+        struct unique_filter<List, Current, OtherTypes...>
+        {
+          using type = typename unique_filter
+          <
+            typename _append_type_if<!is_in_list<List, Current>::value, Current, List>::type,
+            OtherTypes...
+          >::type;
+        };
+        // conditionally merge
+        template<template<typename X> class Predicate, typename List, typename...> struct cmerge_filter { using type = List; };
+        template<template<typename X> class Predicate, typename List, typename Current, typename... OtherTypes>
+        struct cmerge_filter<Predicate, List, Current, OtherTypes...>
+        {
+          using type = typename cmerge_filter
+          <
+            Predicate,
+            typename _append_type_if<!Predicate<Current>::value, Current, List>::type,
+            OtherTypes...
+          >::type;
+        };
+
       public:
         template<size_t Index>
         using get_type = typename type_at_index<Index, Types...>::type;
+
+        // get_type_index<int>::index will give the first index of "int" in the list. -1 if not found.
+        template<typename Type>
+        using get_type_index = type_index<0, Type, Types...>;
+
+        // Predicate Should be a class that takes an unique parameter and defines a boolean ::value.
+        // ::index will give you the index, could be -1 if not found
+        template<template<typename X> class Predicate>
+        using find_if = find_type_index<Predicate, 0, Types...>;
+
+        // Create a new list without all types that matches Predicate
+        // Predicate Should be a class that takes an unique parameter and defines a boolean ::value.
+        template<template<typename X> class Predicate>
+        using remove_if = typename cmerge_filter<Predicate, ct::type_list<>, Types...>::type;
+
+        // Predicate Should be a class that takes an unique parameter and defines a type ::type.
+        // It applies the predicate on every type of the list and return the generated list
+        template<template<typename X> class Predicate>
+        using for_each = ct::type_list<typename Predicate<Types>::type...>;
+
+        // remove duplicates
+        using make_unique = typename unique_filter<ct::type_list<>, Types...>::type;
 
         using tuple_type = cr::tuple<Types...>;
         static constexpr size_t size = sizeof...(Types);
 
         using pop_front = typename except_first<Types...>::type;
         using front = typename except_first<Types...>::first;
+
 
         template<typename... Values>
         static constexpr cr::tuple<Types...> instanciate_tuple(Values... vals)
@@ -128,7 +190,7 @@ namespace neam
       return type_list<Types...>();
     }
 
-// an a macro to get the type_list from a variadic list of arguments.
+// a macro to get the type_list from a variadic list of arguments.
 #define N_CT_TYPE_LIST_FROM_VALUES(...)         decltype(neam::ct::type_list_from_values(__VA_ARGS__))
 
   } // namespace ct

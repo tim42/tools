@@ -45,9 +45,63 @@ namespace neam
       using type = cr::tuple<Cr, Others...>;
     };
     template <typename Cr, typename ...Others>
+    struct prepend_type<Cr, ct::type_list<Others...>>
+    {
+      using type = ct::type_list<Cr, Others...>;
+    };
+    template <typename Cr, typename ...Others>
     struct append_type<Cr, cr::tuple<Others...>>
     {
       using type = cr::tuple<Others..., Cr>;
+    };
+    template <typename Cr, typename ...Others>
+    struct append_type<Cr, ct::type_list<Others...>>
+    {
+      using type = ct::type_list<Others..., Cr>;
+    };
+
+    template <bool Cond, typename Cr, typename Type> struct prepend_type_if {};
+    template <bool Cond, typename Cr, typename Type> struct append_type_if {};
+
+    template <typename Cr, typename ...Others>
+    struct prepend_type_if<true, Cr, cr::tuple<Others...>>
+    {
+      using type = cr::tuple<Cr, Others...>;
+    };
+    template <typename Cr, typename ...Others>
+    struct prepend_type_if<false, Cr, cr::tuple<Others...>>
+    {
+      using type = cr::tuple<Others...>;
+    };
+    template <typename Cr, typename ...Others>
+    struct prepend_type_if<true, Cr, ct::type_list<Others...>>
+    {
+      using type = ct::type_list<Cr, Others...>;
+    };
+    template <typename Cr, typename ...Others>
+    struct prepend_type_if<false, Cr, ct::type_list<Others...>>
+    {
+      using type = ct::type_list<Others...>;
+    };
+    template <typename Cr, typename ...Others>
+    struct append_type_if<true, Cr, cr::tuple<Others...>>
+    {
+      using type = cr::tuple<Others..., Cr>;
+    };
+    template <typename Cr, typename ...Others>
+    struct append_type_if<false, Cr, cr::tuple<Others...>>
+    {
+      using type = cr::tuple<Others...>;
+    };
+    template <typename Cr, typename ...Others>
+    struct append_type_if<true, Cr, ct::type_list<Others...>>
+    {
+      using type = ct::type_list<Others..., Cr>;
+    };
+    template <typename Cr, typename ...Others>
+    struct append_type_if<false, Cr, ct::type_list<Others...>>
+    {
+      using type = ct::type_list<Others...>;
     };
 
     // the merger

@@ -56,6 +56,54 @@ namespace neam
     {
       static_assert(!(Index + 1), "requesting type_at_index of an empty 'type' list. (this could also be caused by an out of range access).");
     };
+
+    // default (if the type is not found)
+    template<size_t Index, typename Type, typename... Types>
+    struct type_index
+    {
+      static constexpr long index = -1;
+    };
+
+    // non-empty list
+    template<size_t Index, typename Type, typename Current, typename... Types>
+    struct type_index<Index, Type, Current, Types...>
+    {
+      static constexpr long index = type_index<Index + 1, Type, Types...>::index;
+    };
+
+    template<size_t Index, typename Current, typename... Types>
+    struct type_index<Index, Current, Current, Types...>
+    {
+      static constexpr long index = Index;
+    };
+
+    // empty list
+    template<size_t Index, typename Type>
+    struct type_index<Index, Type>
+    {
+      static constexpr long index = -1;
+    };
+
+    // default (if the type is not found)
+    template<template<typename X> class Predicate, size_t Index, typename... Types>
+    struct find_type_index
+    {
+      static constexpr long index = -1;
+    };
+
+    // non-empty list
+    template<template<typename X> class Predicate, size_t Index, typename Current, typename... Types>
+    struct find_type_index<Predicate, Index, Current, Types...>
+    {
+      static constexpr long index = Predicate<Current>::value ? Index : find_type_index<Predicate, Index + 1, Types...>::index;
+    };
+
+    // empty list
+    template<template<typename X> class Predicate, size_t Index>
+    struct find_type_index<Predicate, Index>
+    {
+      static constexpr long index = -1;
+    };
   } // namespace ct
 } // namespace neam
 
