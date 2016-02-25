@@ -34,17 +34,10 @@ namespace neam
           // this is used to implement greedy operators
           constexpr static long ce_movetoend(const char *s, long index, e_match_type emt = e_match_type::full)
           {
-            if (index == -1)
-              return -1;
-            if (s[index] == '\0')
+            long ret = 0;
+            if (s[index] == '\0' || (ret = Atom::single_match(s, index)) == -1)
               return Atom::next_match(s, index, emt);
-            else
-            {
-              long ret = ce_movetoend(s, Atom::single_match(s, index), emt);
-              if (ret != -1)
-                return ret;
-              return Atom::next_match(s, index, emt);
-            }
+            return ce_movetoend(s, ret, emt);
           }
 
         public:
@@ -74,15 +67,10 @@ namespace neam
           {
             if (index == -1)
               return -1;
-            if (s[index] == '\0')
+            long ret = 0;
+            if (s[index] == '\0' || (ret = Atom::single_match(s, index)) == -1)
               return Atom::next_match(s, index, emt);
-            else
-            {
-              long ret = ce_movetoend(s, Atom::single_match(s, index), emt);
-              if (ret != -1)
-                return ret;
-              return Atom::next_match(s, index, emt);
-            }
+            return ce_movetoend(s, ret, emt);
           }
 
         public:
