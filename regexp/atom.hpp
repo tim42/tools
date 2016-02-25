@@ -37,7 +37,19 @@ namespace neam
       };
 
       class no_prev {};
-      class no_parent {};
+      class no_parent
+      {
+        private:
+          struct __t
+          {
+            static constexpr long match(const char *, long , e_match_type = e_match_type::full)
+            {
+              return -1;
+            }
+          };
+        public:
+          using next_t = __t;
+      };
 
       class no_head
       {
@@ -297,7 +309,7 @@ namespace neam
             // match a character
             static constexpr bool match(char c)
             {
-              if (is_range)
+              if (is_range) // is range is a compile-time constant, only one alternative is generated
               {
                 if (c >= start_range && c <= end_range)
                   return true;
