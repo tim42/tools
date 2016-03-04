@@ -67,6 +67,10 @@ namespace neam
         struct _append_type_if<true, Cr, ct::type_list<Others...>> { using type = ct::type_list<Others..., Cr>; };
         template <typename Cr, typename ...Others>
         struct _append_type_if<false, Cr, ct::type_list<Others...>> { using type = ct::type_list<Others...>; };
+        // can't use merger for the same reason
+        template<typename Type1, typename Type2> struct _merger {};
+        template<typename... Types1, typename... Types2>
+        struct _merger<ct::type_list<Types1...>, ct::type_list<Types2...>> { using type_list = ct::type_list<Types1..., Types2...>; };
 
         // filter for uniqueness
         template<typename List, typename...> struct unique_filter { using type = List; };
@@ -80,19 +84,41 @@ namespace neam
           >::type;
         };
         // conditionally merge
-        template<template<typename X> class Predicate, typename List, typename...> struct cmerge_filter { using type = List; };
-        template<template<typename X> class Predicate, typename List, typename Current, typename... OtherTypes>
-        struct cmerge_filter<Predicate, List, Current, OtherTypes...>
+        template<bool ExpectedValue, template<typename X> class Predicate, typename List, typename...> struct cmerge_filter { using type = List; };
+        template<bool ExpectedValue, template<typename X> class Predicate, typename List, typename Current, typename... OtherTypes>
+        struct cmerge_filter<ExpectedValue, Predicate, List, Current, OtherTypes...>
         {
           using type = typename cmerge_filter
           <
+            ExpectedValue,
             Predicate,
-            typename _append_type_if<!Predicate<Current>::value, Current, List>::type,
+            typename _append_type_if<(Predicate<Current>::value == ExpectedValue), Current, List>::type,
+            OtherTypes...
+          >::type;
+        };
+        // flatten merge
+        template<typename List, typename...> struct flatten_merge_filter { using type = List; };
+        template<typename List, typename Current, typename... OtherTypes>
+        struct flatten_merge_filter<List, Current, OtherTypes...>
+        {
+          using type = typename flatten_merge_filter
+          <
+            typename _append_type_if<true, Current, List>::type,
+            OtherTypes...
+          >::type;
+        };
+        template<typename List, typename... Current, typename... OtherTypes>
+        struct flatten_merge_filter<List, type_list<Current...>, OtherTypes...>
+        {
+          using type = typename flatten_merge_filter
+          <
+            typename _merger<type_list<Current...>, List>::type_list,
             OtherTypes...
           >::type;
         };
 
       public:
+
         template<size_t Index>
         using get_type = typename type_at_index<Index, Types...>::type;
 
@@ -100,23 +126,41 @@ namespace neam
         template<typename Type>
         using get_type_index = type_index<0, Type, Types...>;
 
-        // Predicate Should be a class that takes an unique parameter and defines a boolean ::value.
+        // Predicate Should be a class that takes an unique parameter and defines a boolean static attribute value.
         // ::index will give you the index, could be -1 if not found
+        // ::type will give you the type, could be ct::type_not_found if not found
         template<template<typename X> class Predicate>
         using find_if = find_type_index<Predicate, 0, Types...>;
+
+        // defines a static property value that is a boolean indicating if the type is in the list
+        template<typename Type>
+        using is_in_list = ct::is_in_list<ct::type_list<Types...>, Type>;
 
         // Create a new list without all types that matches Predicate
         // Predicate Should be a class that takes an unique parameter and defines a boolean ::value.
         template<template<typename X> class Predicate>
-        using remove_if = typename cmerge_filter<Predicate, ct::type_list<>, Types...>::type;
+        using remove_if = typename cmerge_filter<false, Predicate, ct::type_list<>, Types...>::type;
 
         // Predicate Should be a class that takes an unique parameter and defines a type ::type.
         // It applies the predicate on every type of the list and return the generated list
         template<template<typename X> class Predicate>
         using for_each = ct::type_list<typename Predicate<Types>::type...>;
 
+        // Same as for_each, but the Predicate itself replace the type
+        template<template<typename X> class Predicate>
+        using direct_for_each = ct::type_list<Predicate<Types>...>;
+
+        // Filter the list by a predicate (takes an element as template parameter, has a static (constexpr) attribute value that can be casted to a boolean)
+        // The result type is the list that contains all the elements for whose Predicate<>::value has been true.
+        // It is the exate opposite of remove_if
+        template<template<typename X> class Predicate>
+        using filter_by = typename cmerge_filter<true, Predicate, ct::type_list<>, Types...>::type;
+
         // remove duplicates
         using make_unique = typename unique_filter<ct::type_list<>, Types...>::type;
+
+        // merge type_list<>
+        using flatten = typename flatten_merge_filter<ct::type_list<>, Types...>::type;
 
         using tuple_type = cr::tuple<Types...>;
         static constexpr size_t size = sizeof...(Types);
@@ -124,6 +168,15 @@ namespace neam
         using pop_front = typename except_first<Types...>::type;
         using front = typename except_first<Types...>::first;
 
+        template<typename... OtherTypes>
+        using append = ct::type_list<Types..., OtherTypes...>;
+        template<typename... OtherTypes>
+        using prepend = ct::type_list<OtherTypes..., Types...>;
+
+        template<typename List>
+        using append_list = typename _merger<ct::type_list<Types...>, List>::type_list;
+        template<typename List>
+        using prepend_list = typename _merger<List, ct::type_list<Types...>>::type_list;
 
         template<typename... Values>
         static constexpr cr::tuple<Types...> instanciate_tuple(Values... vals)

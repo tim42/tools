@@ -26,6 +26,7 @@
 #ifndef __N_116125905863745338_727783173__TYPE_AT_INDEX_HPP__
 # define __N_116125905863745338_727783173__TYPE_AT_INDEX_HPP__
 
+#include <type_traits>
 #include <cstdint>
 #include <cstddef>
 
@@ -84,18 +85,24 @@ namespace neam
       static constexpr long index = -1;
     };
 
+    /// \brief A type for indicating that a type can't be found.
+    struct type_not_found {};
+
     // default (if the type is not found)
     template<template<typename X> class Predicate, size_t Index, typename... Types>
     struct find_type_index
     {
       static constexpr long index = -1;
+      using type = type_not_found;
     };
 
     // non-empty list
     template<template<typename X> class Predicate, size_t Index, typename Current, typename... Types>
     struct find_type_index<Predicate, Index, Current, Types...>
     {
-      static constexpr long index = Predicate<Current>::value ? Index : find_type_index<Predicate, Index + 1, Types...>::index;
+      static constexpr bool _is_found = Predicate<Current>::value;
+      static constexpr long index = (_is_found ? Index : find_type_index<Predicate, Index + 1, Types...>::index);
+      using type = typename std::conditional<_is_found, Current, typename find_type_index<Predicate, Index + 1, Types...>::type>::type;
     };
 
     // empty list
@@ -103,6 +110,7 @@ namespace neam
     struct find_type_index<Predicate, Index>
     {
       static constexpr long index = -1;
+      using type = type_not_found;
     };
   } // namespace ct
 } // namespace neam
