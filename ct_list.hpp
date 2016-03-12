@@ -53,12 +53,29 @@ namespace neam
         {
           using type = type_list<>;
           using first = void;
+          using last = void;
         };
         template<typename First, typename... Nexts>
         struct except_first<First, Nexts...>
         {
           using type = type_list<Nexts...>;
           using first = First;
+          using last = typename type_list<First, Nexts...>::template get_type<sizeof...(Nexts)>;
+        };
+        template<typename... O>
+        struct except_last
+        {
+          using type = type_list<>;
+        };
+        template<typename Last>
+        struct except_last<Last>
+        {
+          using type = type_list<>;
+        };
+        template<typename First, typename Second, typename... Nexts>
+        struct except_last<First, Second, Nexts...>
+        {
+          using type = typename except_last<Second, Nexts...>::type::template prepend<First>;
         };
 
         // conditionally append (can't use the append_type_if in merge_pack.hpp)
@@ -116,6 +133,26 @@ namespace neam
             OtherTypes...
           >::type;
         };
+        template<size_t StartIndex, size_t Size, typename Result, typename... OTypes>
+        struct _sublist_gen
+        {
+          using type = Result;
+        };
+        template<size_t StartIndex, size_t Size, typename Result, typename CType, typename... OTypes>
+        struct _sublist_gen<StartIndex, Size, Result, CType, OTypes...>
+        {
+          using type = typename _sublist_gen<StartIndex - 1, Size, Result, OTypes...>::type;
+        };
+        template<size_t Size, typename Result, typename CType, typename... OTypes>
+        struct _sublist_gen<0, Size, Result, CType, OTypes...>
+        {
+          using type = typename _sublist_gen<0, Size - 1, typename Result::template append<CType>, OTypes...>::type;
+        };
+        template<size_t StartIndex, size_t Size, typename Result>
+        struct _sublist_gen<StartIndex, Size, Result> // the end
+        {
+          using type = Result;
+        };
 
       public:
 
@@ -167,6 +204,8 @@ namespace neam
 
         using pop_front = typename except_first<Types...>::type;
         using front = typename except_first<Types...>::first;
+//         using pop_back = typename except_last<Types...>::type;
+        using back = typename except_first<Types...>::last;
 
         template<typename... OtherTypes>
         using append = ct::type_list<Types..., OtherTypes...>;
@@ -177,6 +216,9 @@ namespace neam
         using append_list = typename _merger<ct::type_list<Types...>, List>::type_list;
         template<typename List>
         using prepend_list = typename _merger<List, ct::type_list<Types...>>::type_list;
+
+        template<size_t StartIndex, size_t Size>
+        using sublist = typename _sublist_gen<StartIndex, Size, ct::type_list<>, Types...>::type;
 
         template<typename... Values>
         static constexpr cr::tuple<Types...> instanciate_tuple(Values... vals)
