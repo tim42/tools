@@ -154,6 +154,16 @@ namespace neam
         {
         };
 
+        template<bool, typename Res, typename... Next> struct _reverse {};
+
+        template<bool X, typename Res, typename Current, typename... Next>
+        struct _reverse<X, Res, Current, Next...> : public _reverse<X, typename Res::template prepend<Current>, Next...> {};
+        template<bool X, typename Res>
+        struct _reverse<X, Res>
+        {
+          using type = Res;
+        };
+
       public:
 
         template<size_t Index>
@@ -220,6 +230,12 @@ namespace neam
         template<typename List>
         using prepend_list = typename _merger<List, ct::type_list<Types...>>::type_list;
 
+        // reverse the order of the list (front is back, and back is front)
+        // NOTE: The GCC bug is very VERY nasty as it make the compiler consume the whole available memory
+        //       It seems the only workaround is to make this a template to avoid that HUGE memory consumption
+        //       The value of the boolean template parameter does not mean anything and any value will fit.
+        template<bool WorkAroundGccBug>
+        using reverse = typename _reverse<WorkAroundGccBug, type_list<>, Types...>::type;
 
         template<typename... Values>
         static constexpr cr::tuple<Types...> instanciate_tuple(Values... vals)
