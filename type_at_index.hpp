@@ -40,9 +40,8 @@ namespace neam
 
     // non-empty list
     template<size_t Index, typename Current, typename... Types>
-    struct type_at_index<Index, Current, Types...>
+    struct type_at_index<Index, Current, Types...> : public type_at_index<Index - 1, Types...>
     {
-      using type = typename type_at_index<Index - 1, Types...>::type;
     };
 
     template<typename Current, typename... Types>
@@ -66,16 +65,15 @@ namespace neam
     };
 
     // non-empty list
-    template<size_t Index, typename Type, typename Current, typename... Types>
-    struct type_index<Index, Type, Current, Types...>
-    {
-      static constexpr long index = type_index<Index + 1, Type, Types...>::index;
-    };
-
     template<size_t Index, typename Current, typename... Types>
     struct type_index<Index, Current, Current, Types...>
     {
       static constexpr long index = Index;
+    };
+
+    template<size_t Index, typename Type, typename Current, typename... Types>
+    struct type_index<Index, Type, Current, Types...> : public type_index<Index + 1, Type, Types...>
+    {
     };
 
     // empty list
