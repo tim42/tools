@@ -96,6 +96,17 @@ namespace neam
             OtherTypes...
           >::type;
         };
+        template<template<typename X, typename Y> class Predicate, typename List, typename...> struct unique_filter_pred { using type = List; };
+        template<template<typename X, typename Y> class Predicate, typename List, typename Current, typename... OtherTypes>
+        struct unique_filter_pred<Predicate, List, Current, OtherTypes...>
+        {
+          using type = typename unique_filter_pred
+          <
+            Predicate,
+            typename _append_type_if<Predicate<List, Current>::value, Current, List>::type,
+            OtherTypes...
+          >::type;
+        };
         // conditionally merge
         template<bool ExpectedValue, template<typename X> class Predicate, typename List, typename...> struct cmerge_filter { using type = List; };
         template<bool ExpectedValue, template<typename X> class Predicate, typename List, typename Current, typename... OtherTypes>
@@ -205,6 +216,10 @@ namespace neam
 
         // remove duplicates
         using make_unique = typename unique_filter<ct::type_list<>, Types...>::type;
+
+        // remove duplicates, with a predicate to indicate if there's already CurrentElement in List
+        template<template<typename List, typename CurrentElement> class Predicate>
+        using make_unique_pred = typename unique_filter_pred<Predicate, ct::type_list<>, Types...>::type;
 
         // merge type_list<>
         using flatten = typename flatten_merge_filter<ct::type_list<>, Types...>::type;
