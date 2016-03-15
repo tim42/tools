@@ -169,12 +169,12 @@ namespace neam
         {
         };
 
-        template<bool, typename Res, typename... Next> struct _reverse {};
+        template<typename Res, typename... Next> struct _reverse {};
 
-        template<bool X, typename Res, typename Current, typename... Next>
-        struct _reverse<X, Res, Current, Next...> : public _reverse<X, typename Res::template prepend<Current>, Next...> {};
-        template<bool X, typename Res>
-        struct _reverse<X, Res>
+        template<typename... Res, typename Current, typename... Next>
+        struct _reverse<type_list<Res...>, Current, Next...> : public _reverse<type_list<Current, Res...>, Next...> {};
+        template<typename Res>
+        struct _reverse<Res>
         {
           using type = Res;
         };
@@ -253,8 +253,7 @@ namespace neam
         // NOTE: The GCC bug is very VERY nasty as it make the compiler consume the whole available memory
         //       It seems the only workaround is to make this a template to avoid that HUGE memory consumption
         //       The value of the boolean template parameter does not mean anything and any value will fit.
-        template<bool WorkAroundGccBug>
-        using reverse = typename _reverse<WorkAroundGccBug, type_list<>, Types...>::type;
+        using reverse = typename _reverse<type_list<>, Types...>::type;
 
         template<typename... Values>
         static constexpr cr::tuple<Types...> instanciate_tuple(Values... vals)
