@@ -92,57 +92,57 @@ namespace neam
         // filter for uniqueness
         template<typename List, typename...> struct unique_filter { using type = List; };
         template<typename List, typename Current, typename... OtherTypes>
-        struct unique_filter<List, Current, OtherTypes...>
+        struct unique_filter<List, Current, OtherTypes...> :
+        public unique_filter
+        <
+          typename _append_type_if<!is_in_list<List, Current>::value, Current, List>::type,
+          OtherTypes...
+        >
         {
-          using type = typename unique_filter
-          <
-            typename _append_type_if<!is_in_list<List, Current>::value, Current, List>::type,
-            OtherTypes...
-          >::type;
         };
         template<template<typename X, typename Y> class Predicate, typename List, typename...> struct unique_filter_pred { using type = List; };
         template<template<typename X, typename Y> class Predicate, typename List, typename Current, typename... OtherTypes>
-        struct unique_filter_pred<Predicate, List, Current, OtherTypes...>
+        struct unique_filter_pred<Predicate, List, Current, OtherTypes...> :
+        public unique_filter_pred
+        <
+          Predicate,
+          typename _append_type_if<Predicate<List, Current>::value, Current, List>::type,
+          OtherTypes...
+        >
         {
-          using type = typename unique_filter_pred
-          <
-            Predicate,
-            typename _append_type_if<Predicate<List, Current>::value, Current, List>::type,
-            OtherTypes...
-          >::type;
         };
         // conditionally merge
         template<bool ExpectedValue, template<typename X> class Predicate, typename List, typename...> struct cmerge_filter { using type = List; };
         template<bool ExpectedValue, template<typename X> class Predicate, typename List, typename Current, typename... OtherTypes>
-        struct cmerge_filter<ExpectedValue, Predicate, List, Current, OtherTypes...>
+        struct cmerge_filter<ExpectedValue, Predicate, List, Current, OtherTypes...> :
+        public cmerge_filter
+        <
+          ExpectedValue,
+          Predicate,
+          typename _append_type_if<(Predicate<Current>::value == ExpectedValue), Current, List>::type,
+          OtherTypes...
+        >
         {
-          using type = typename cmerge_filter
-          <
-            ExpectedValue,
-            Predicate,
-            typename _append_type_if<(Predicate<Current>::value == ExpectedValue), Current, List>::type,
-            OtherTypes...
-          >::type;
         };
         // flatten merge
         template<typename List, typename...> struct flatten_merge_filter { using type = List; };
         template<typename List, typename Current, typename... OtherTypes>
-        struct flatten_merge_filter<List, Current, OtherTypes...>
+        struct flatten_merge_filter<List, Current, OtherTypes...> :
+        public flatten_merge_filter
+        <
+          typename _append_type_if<true, Current, List>::type,
+          OtherTypes...
+        >
         {
-          using type = typename flatten_merge_filter
-          <
-            typename _append_type_if<true, Current, List>::type,
-            OtherTypes...
-          >::type;
         };
         template<typename List, typename... Current, typename... OtherTypes>
         struct flatten_merge_filter<List, type_list<Current...>, OtherTypes...>
+        : public flatten_merge_filter
+        <
+          typename _merger<type_list<Current...>, List>::type_list,
+          OtherTypes...
+        >
         {
-          using type = typename flatten_merge_filter
-          <
-            typename _merger<type_list<Current...>, List>::type_list,
-            OtherTypes...
-          >::type;
         };
         template<size_t StartIndex, size_t Size, typename Result, typename... OTypes>
         struct _sublist_gen

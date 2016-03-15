@@ -98,13 +98,24 @@ namespace neam
       using type = type_not_found;
     };
 
+    // type found
+    template<size_t Index, typename Type>
+    struct found_type_index
+    {
+      static constexpr long index = Index;
+      using type = Type;
+    };
+
     // non-empty list
     template<template<typename X> class Predicate, size_t Index, typename Current, typename... Types>
-    struct find_type_index<Predicate, Index, Current, Types...>
+    struct find_type_index<Predicate, Index, Current, Types...> : public
+    std::conditional
+    <
+      Predicate<Current>::value,
+      found_type_index<Index, Current>,
+      find_type_index<Predicate, Index + 1, Types...>
+    >::type
     {
-      static constexpr bool _is_found = Predicate<Current>::value;
-      static constexpr long index = (_is_found ? Index : find_type_index<Predicate, Index + 1, Types...>::index);
-      using type = typename std::conditional<_is_found, Current, typename find_type_index<Predicate, Index + 1, Types...>::type>::type;
     };
 
     // empty list
