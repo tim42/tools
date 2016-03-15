@@ -7,9 +7,7 @@ Some are creepy, ugly (like `embed` or `execute_pack`) while other are really wo
 
 ## list of tools included
 
-**NOTE:** on `cr` et `ct`: `ct` is for tools with _only_ a compile time components,
-(the only exceptions being `contructor::call` that also perform placement new (but is in `ct` because of its similarity / complementarity with `ct::embed`)
-and `cr::tuple` which is in `cr`... until I move it from here / remove it).
+**NOTE:** on `cr` et `ct`: `ct` is for tools with _mostly_ a compile time components,
 
 - `ct::regexp`: a very easy-to-use compile-time regular expression that can matches string at both compile-time and runtime. ( `neam::ct::regexp<my_reg_exp_str>::match("my string")` )
   It currently handles `(...)`, `...|...`, `...*`, `...?`, `...+`, `$`, `\`, `.`, `...!` (postfix not), `[...]` (match a range), `{n}` `{,m}` `{n,}` `{n,m}` (repeat from n to m time)
