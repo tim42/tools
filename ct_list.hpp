@@ -154,18 +154,18 @@ namespace neam
         {
           using type = Result;
         };
-        template<typename Result, typename CType, typename... OTypes>
-        struct _sublist_gen<0, 0, Result, CType, OTypes...> // the end (size has been reached)
+        template<typename... Result, typename CType, typename... OTypes>
+        struct _sublist_gen<0, 0, type_list<Result...>, CType, OTypes...> // the end (size has been reached)
         {
-          using type = Result;
+          using type = type_list<Result...>;
         };
 
         template<size_t StartIndex, size_t Size, typename Result, typename CType, typename... OTypes>
         struct _sublist_gen<StartIndex, Size, Result, CType, OTypes...> : public _sublist_gen<StartIndex - 1, Size, Result, OTypes...>
         {
         };
-        template<size_t Size, typename Result, typename CType, typename... OTypes>
-        struct _sublist_gen<0, Size, Result, CType, OTypes...> : public _sublist_gen<0, Size - 1, typename Result::template append<CType>, OTypes...>
+        template<size_t Size, typename... Result, typename CType, typename... OTypes>
+        struct _sublist_gen<0, Size, type_list<Result...>, CType, OTypes...> : public _sublist_gen<0, Size - 1, type_list<Result..., CType>, OTypes...>
         {
         };
 
