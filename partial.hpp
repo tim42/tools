@@ -40,8 +40,8 @@
 //
 // and      type<ptype1, ptype2, ptype3, ptype4, ...>::type (or using cast operators with the 'partial<>' class directly, or with the 'type<>' alias.)
 
-#include <tools/param.hpp>
-#include <tools/ct_list.hpp>
+#include "param.hpp"
+#include "ct_list.hpp"
 
 namespace neam
 {

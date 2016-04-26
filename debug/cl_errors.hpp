@@ -140,7 +140,7 @@ namespace neam
         {
           if (code == 0)
             return true;
-          return is_error();
+          return is_error(code);
         }
 
         static std::string get_code_name(long code)

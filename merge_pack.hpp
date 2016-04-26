@@ -30,8 +30,8 @@
 #ifndef __N_894093274638761124_1022288400__MERGE_PACK_HPP__
 # define __N_894093274638761124_1022288400__MERGE_PACK_HPP__
 
-#include <tools/ct_list.hpp>
-#include <tools/tuple.hpp>
+#include "ct_list.hpp"
+#include "tuple.hpp"
 
 // merge two type_list / merger / tuple in one type_list / tuple
 

@@ -43,7 +43,7 @@
 
 /// \brief used to print a lovely file / line info on the log file.
 /// \see LOGGER_INFO
-#define LOGGER_INFO_TPL(f, l) std::setw(67) << std::left << std::setfill('.') << (std::string(f) + " ") << ": " << std::setw(4) << std::setfill(' ') << l << std::right << ": " << neam::cr::internal::end_header
+#define LOGGER_INFO_TPL(f, l) std::setw(55) << std::left << std::setfill('.') << (std::string(f) + " ") << ": " << std::setw(4) << std::setfill(' ') << l << std::right << ": " << neam::cr::internal::end_header
 
 /// \brief used to print a lovely current file / line info on the log file
 #define LOGGER_INFO LOGGER_INFO_TPL(__FILE__, __LINE__)

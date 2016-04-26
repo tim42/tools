@@ -33,8 +33,8 @@
 #include <exception>
 #include <string>
 
-#include <tools/macro.hpp>
-#include <tools/demangle.hpp>
+#include "macro.hpp"
+#include "demangle.hpp"
 
 //
 // NOTE: you can define the macro N_DEBUG_USE_CERR to use std::cerr instead of neam::cr::out
