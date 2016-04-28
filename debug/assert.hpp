@@ -69,9 +69,6 @@ namespace neam
 {
   namespace debug
   {
-    class assert {};
-    class function_check {};
-
     template<template<typename ErrorType> class ErrorClass, template<typename> class ExceptionClass = typed_exception>
     class on_error
     {
@@ -150,12 +147,12 @@ namespace neam
           if (N_ALLOW_DEBUG || !status)
           {
 #ifdef N_DEBUG_USE_CERR
-            std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (neam::demangle<assert>() + ": " + test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
+            std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
 #else
             if (!status)
-              neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (neam::demangle<_assert>() + ": " + test + " ") << "[FAILED]: " + message << std::endl;
+              neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << "[FAILED]: " + message << std::endl;
             else
-              neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (neam::demangle<_assert>() + ": " + test + " ") << " [SUCCESS]" << std::endl;
+              neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << " [SUCCESS]" << std::endl;
 #endif
             if (!status)
               throw ExceptionClass<on_error>(test + ": assert failed: " + message);
@@ -167,12 +164,12 @@ namespace neam
           if (N_ALLOW_DEBUG || !status)
           {
 #ifdef N_DEBUG_USE_CERR
-            std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (neam::demangle<assert>() + ": " + test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
+            std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
 #else
             if (!status)
-              neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (neam::demangle<_assert_and_return>() + ": " + test + " ") << "[FAILED]: " + message << std::endl;
+              neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << "[FAILED]: " + message << std::endl;
             else
-              neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (neam::demangle<_assert_and_return>() + ": " + test + " ") << " [SUCCESS]" << std::endl;
+              neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << " [SUCCESS]" << std::endl;
 #endif
           }
           return !status;
