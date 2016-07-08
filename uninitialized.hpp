@@ -42,6 +42,26 @@ namespace neam
     class uninitialized
     {
       public:
+        ObjectType *operator ->()
+        {
+          return reinterpret_cast<ObjectType *>(storage);
+        }
+
+        const ObjectType *operator ->() const
+        {
+          return reinterpret_cast<const ObjectType *>(storage);
+        }
+
+        ObjectType *operator &()
+        {
+          return reinterpret_cast<ObjectType *>(storage);
+        }
+
+        const ObjectType *operator &() const
+        {
+          return reinterpret_cast<const ObjectType *>(storage);
+        }
+
         operator ObjectType &()
         {
           return *reinterpret_cast<ObjectType *>(storage);
@@ -62,6 +82,7 @@ namespace neam
           return *reinterpret_cast<const ObjectType *>(storage);
         }
 
+        using object_type = ObjectType;
       private:
         uint8_t storage[sizeof(ObjectType)];
     };
