@@ -149,7 +149,7 @@ namespace neam
 // a macro to go with it. (it simply create the constructor<>::template call<> type from the value list).
 // use it like this: neam::ct::N_CT_CONSTRUCTOR_CALL_TYPE(1, &this_variable).
 // Doesn't works with strings (this won't work: neam::ct::N_CT_CONSTRUCTOR_CALL_TYPE("coucou")).
-#define N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ...)     neam::ct::constructor<ObjectType, neam::ct::type_list<__VA_ARGS__>>::call
+#define N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ...)     typename neam::ct::constructor<ObjectType, neam::ct::type_list<__VA_ARGS__>>::call
 
 // this one return directly the embed for the underlying type
 #define N_CT_CONSTRUCTOR_CALL_EMBED(ObjectType, ...)    N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ##__VA_ARGS__)::template embed<ObjectType>
