@@ -85,18 +85,18 @@ if (NOT TARGET ${PROJ_APP})
                     
   )
   add_library(${PROJ_APP} STATIC ${PROJ_SOURCES})
+
+  # install
+  install(TARGETS ${PROJ_APP} DESTINATION lib/neam)
+  install(DIRECTORY ./ DESTINATION include/neam/tools
+          FILES_MATCHING PATTERN "*.hpp"
+          PATTERN ".git" EXCLUDE
+          PATTERN "cmake" EXCLUDE
+          PATTERN "samples" EXCLUDE)
 endif()
 
 # export project name to parent project
 if (NOT ${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME})
   set(lib${PROJ_NAME} ${PROJ_APP} PARENT_SCOPE)
 endif()
-
-# install
-install(TARGETS ${PROJ_APP} DESTINATION lib/neam)
-install(DIRECTORY ./ DESTINATION include/neam/tools
-        FILES_MATCHING PATTERN "*.hpp"
-        PATTERN ".git" EXCLUDE
-        PATTERN "cmake" EXCLUDE
-        PATTERN "samples" EXCLUDE)
 
