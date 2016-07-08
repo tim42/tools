@@ -82,8 +82,29 @@ namespace neam
           return *reinterpret_cast<const ObjectType *>(storage);
         }
 
+        /// \brief if call_it is true, it will call the destructor of the object
+        /// when the life of the instance ends. The default is to NOT call the destructor
+        void call_destructor(bool call_it = true)
+        {
+          do_call_destructor = call_it;
+        }
+
+        /// \brief construct the object
+        template<typename... Args>
+        void construct(Args... args)
+        {
+          new (&this->get()) ObjectType(std::forward<Args>(args)...);
+        }
+
+        ~uninitialized()
+        {
+          if (do_call_destructor)
+            this->get().~ObjectType();
+        }
+
         using object_type = ObjectType;
       private:
+        bool do_call_destructor = false;
         uint8_t storage[sizeof(ObjectType)];
     };
   } // namespace cr
