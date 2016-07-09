@@ -56,20 +56,20 @@ namespace neam
         // cast to ObjectType (by calling the constructor)
         inline constexpr operator ObjectType() const
         {
-          return ObjectType(Values::get()...);
+          return ObjectType{Values::get()...};
         }
 
         // allow cast operators of ObjectType to works within this class
         template<typename T>
         inline constexpr operator T() const
         {
-          return static_cast<T>(ObjectType(Values::get()...));
+          return static_cast<T>(ObjectType{Values::get()...});
         }
 
         // the prefered way to use this class :)
         constexpr static ObjectType get()
         {
-          return ObjectType(Values::get()...);
+          return ObjectType{Values::get()...};
         }
 
         using type = ObjectType;
@@ -88,13 +88,13 @@ namespace neam
 //           }
           constexpr operator EmbeddedType() const
           {
-            return ObjectType(Values::get()...);
+            return ObjectType{Values::get()...};
           }
 
           // the preferred way to use this class :)
           constexpr static EmbeddedType get()
           {
-            return ObjectType(Values::get()...);
+            return ObjectType{Values::get()...};
           }
 
           using type = EmbeddedType;
@@ -111,13 +111,13 @@ namespace neam
 
           inline operator EmbeddedType() const
           {
-            return ObjectType(Values::get()...);
+            return ObjectType{Values::get()...};
           }
 
           // the preferred way to use this class :)
           static inline EmbeddedType get()
           {
-            return ObjectType(Values::get()...);
+            return ObjectType{Values::get()...};
           }
 
           using type = EmbeddedType;
@@ -129,7 +129,7 @@ namespace neam
         {
           static inline void on(ObjectType *ptr)
           {
-            new (ptr) ObjectType(Values::get()...);
+            new (ptr) ObjectType{Values::get()...};
           }
           template<typename Ret, typename... Params>
           static inline void forward_to(ObjectType *ptr, Ret(ObjectType::*member_ptr)(Params...))
@@ -149,7 +149,7 @@ namespace neam
 // a macro to go with it. (it simply create the constructor<>::template call<> type from the value list).
 // use it like this: neam::ct::N_CT_CONSTRUCTOR_CALL_TYPE(1, &this_variable).
 // Doesn't works with strings (this won't work: neam::ct::N_CT_CONSTRUCTOR_CALL_TYPE("coucou")).
-#define N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ...)     typename neam::ct::constructor<ObjectType, neam::ct::type_list<__VA_ARGS__>>::call
+#define N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ...)     typename decltype(typename neam::ct::constructor<ObjectType, neam::ct::type_list<__VA_ARGS__>>::call())
 
 // this one return directly the embed for the underlying type
 #define N_CT_CONSTRUCTOR_CALL_EMBED(ObjectType, ...)    N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ##__VA_ARGS__)::template embed<ObjectType>
@@ -162,8 +162,10 @@ namespace neam
 #define N_CT_CONSTRUCTOR_CALL(ObjectType, ...)          static_cast<ObjectType>(N_CT_CONSTRUCTOR_CALL_TYPE(ObjectType, ##__VA_ARGS__)())
 
 // for some similarity with neam::embed:
-#define N_EMBED_OBJECT(ObjectType, ...)                 N_CT_CONSTRUCTOR_CALL_EMBED(ObjectType, ##__VA_ARGS__)
-#define N_CR_EMBED_OBJECT(ObjectType, ...)              N_CT_CONSTRUCTOR_CALL_CR_EMBED(ObjectType, ##__VA_ARGS__)
+#define N_EMBED_OBJECT(ObjectType, ...)                 N_CT_CONSTRUCTOR_CALL_EMBED(ObjectType, __VA_ARGS__)
+#define N_EMBED_OBJECT_0(ObjectType)                    N_CT_CONSTRUCTOR_CALL_EMBED(ObjectType)
+#define N_CR_EMBED_OBJECT(ObjectType, ...)              N_CT_CONSTRUCTOR_CALL_CR_EMBED(ObjectType, __VA_ARGS__)
+#define N_CR_EMBED_OBJECT_0(ObjectType)                 N_CT_CONSTRUCTOR_CALL_CR_EMBED(ObjectType)
 
 // for simple usage with neam::cr::persistence
 #define N_CALL_CONSTRUCTOR(ObjectType, ...)             N_CT_CONSTRUCTOR_CALL_PLACEMENT(ObjectType, ##__VA_ARGS__)
