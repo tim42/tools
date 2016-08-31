@@ -78,7 +78,7 @@ namespace neam
 
       public:
         template<typename ReturnType>
-        static ReturnType &&_throw_exception(const char *file, size_t line, const std::string &func_call, ReturnType &&ret)
+        static ReturnType _throw_exception(const char *file, size_t line, const std::string &func_call, ReturnType ret)
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
           if (N_ALLOW_DEBUG || is_error)
@@ -100,7 +100,7 @@ namespace neam
 
         // return true in case of error
         template<typename ReturnType>
-        static bool _log_and_check(const char *file, size_t line, const std::string &func_call, ReturnType &&ret)
+        static bool _log_and_check(const char *file, size_t line, const std::string &func_call, ReturnType ret)
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
           if (N_ALLOW_DEBUG || is_error)
@@ -124,7 +124,7 @@ namespace neam
 
         // simply log the error and return the value 'as-is'
         template<typename ReturnType>
-        static ReturnType &&_log_and_return(const char *file, size_t line, const std::string &func_call, ReturnType &&ret)
+        static ReturnType _log_and_return(const char *file, size_t line, const std::string &func_call, ReturnType ret)
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
           if (N_ALLOW_DEBUG || is_error)
@@ -176,9 +176,9 @@ namespace neam
         }
 
         template<typename ReturnType>
-        static ReturnType &&_dummy(ReturnType &&ret)
+        static inline ReturnType _dummy(ReturnType ret)
         {
-          return std::move(ret);
+          return (ret);
         }
 
 #if not defined N_DISABLE_ASSERTS and not defined N_DISABLE_CHECKS
@@ -187,7 +187,7 @@ namespace neam
 #define n_assert_and_return(test, message)        _assert_and_return(__FILE__, __LINE__, #test, test, message)
 #define n_assert_and_return_exp(test, message)    assert_and_return(test, message)
 #else
-#define n_assert(test, message)                   _dummy(((test), true))
+#define n_assert(test, message)                   _dummy((test))
 #define n_assert_exp(test, message)               assert(test, message)
 #define n_assert_and_return(test, message)        _dummy(((test), true))
 #define n_assert_and_return_exp(test, message)    assert_and_return(test, message)
@@ -205,7 +205,7 @@ namespace neam
 # define n_throw_exception_exp(fnc)               _dummy(fnc)
 # define n_log_and_return(fnc)                    _dummy(fnc)
 # define n_log_and_return_exp(fnc)                _dummy(fnc)
-# define n_log_and_check(fnc)                     _dummy(fnc)
+# define n_log_and_check(fnc)                     _dummy((fnc, true))
 # define n_log_and_check_exp(fnc)                 _dummy(fnc)
 #endif
 
