@@ -34,7 +34,7 @@
 // this execute 'instr' for each value in the pack (instr must depends of an variadic template / argument pack)
 // The compiler is smart enought to just remove the array and keep the calls. (and inlining thems, if possible).
 // So this produce no overhead !! :) (and avoid a recursive proxy function).
-#define NEAM_EXECUTE_PACK(instr)    void((int []){((instr), 0)...})
+#define NEAM_EXECUTE_PACK(...)    void((int []){((__VA_ARGS__), 0)...})
 
 // -- usage exemple:
 //
