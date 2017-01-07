@@ -97,19 +97,19 @@ namespace neam
     // /// ///
 
     template<typename FunctionType>
-    struct function_traits
+    struct function_traits : public function_traits<decltype(&FunctionType::operator())>
     {
-      static constexpr bool is_function = false;
-#ifdef IN_IDE_PARSER
-      static constexpr bool is_member = false;
-      using return_type = void;
-      using ptr_type = void; // not a pointer
-      using arg_list = type_list<>;
-#endif
+//       static constexpr bool is_function = false;
+// #ifdef IN_IDE_PARSER
+//       static constexpr bool is_member = false;
+//       using return_type = void;
+//       using ptr_type = void; // not a pointer
+//       using arg_list = type_list<>;
+// #endif
     };
 
-    template<typename FunctionType>
-    constexpr bool function_traits<FunctionType>::is_function;
+//     template<typename FunctionType>
+//     constexpr bool function_traits<FunctionType>::is_function;
 
     // standard function
     template<typename Return, typename... Parameters>
