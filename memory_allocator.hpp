@@ -33,6 +33,7 @@
 #include <cstdlib>
 #include <new>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 
 
@@ -74,6 +75,42 @@ namespace neam
 
           use_fallback = true;
           failed = false;
+        }
+
+        /// \brief Move constructor
+        memory_allocator(memory_allocator &&o)
+         : first(o.first), last(o.last), pool_size(o.pool_size), failed(o.failed),
+           use_fallback(o.use_fallback), fallback_allocator(o.fallback_allocator),
+           full_allocator(o.full_allocator)
+        {
+          o.first = nullptr;
+          o.last = nullptr;
+          o.pool_size = 0;
+          o.failed = true; // Set the failed flag. Just in case.
+          o.fallback_allocator = nullptr;
+        }
+
+        /// \brief Move/affectation operator
+        memory_allocator &operator = (memory_allocator &&o)
+        {
+          if (&o == this)
+            return *this;
+
+          clear();
+          first = o.first;
+          last = o.last;
+          pool_size = o.pool_size;
+          failed = o.failed;
+          use_fallback = o.use_fallback;
+          fallback_allocator = o.fallback_allocator;
+          full_allocator = o.full_allocator;
+
+          o.first = nullptr;
+          o.last = nullptr;
+          o.pool_size = 0;
+          o.failed = true; // Set the failed flag. Just in case.
+          o.fallback_allocator = nullptr;
+          return *this;
         }
 
         ~memory_allocator()
@@ -342,6 +379,16 @@ namespace neam
           return true;
         }
 
+        /// \brief Check if the data is already contiguous
+        bool is_data_contiguous() const
+        {
+          if (!first)
+            return true;
+          if (!first->next && first->start_offset == 0) // already contiguous
+            return true;
+          return false;
+        }
+
         /// \brief make the data contiguous.
         /// \note don't free the memory !!!
         void *get_contiguous_data()
@@ -377,6 +424,27 @@ namespace neam
           first = new_chk;
           last = new_chk;
           return new_chk->data;
+        }
+
+        /// \brief Like get_contiguous_data() but does not clear the memory_allocator
+        /// \note As you have the ownership of the memory, it's your duty to free it
+        void *get_contiguous_data_copy() const
+        {
+          uint8_t *data = reinterpret_cast<uint8_t *>(operator new(pool_size, std::nothrow));
+          if (!data)
+            return nullptr;
+
+          size_t idx = 0;
+          memory_chunk *next = nullptr;
+          for (memory_chunk *chr = first; chr; chr = next)
+          {
+            memcpy(data + idx, chr->data + chr->start_offset, chr->end_offset - chr->start_offset);
+            idx += chr->end_offset - chr->start_offset;
+            next = chr->next;
+            delete chr;
+          }
+
+          return data;
         }
 
         /// \brief give the the data ownership, return the pointer to the data and clear the pool

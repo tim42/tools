@@ -57,12 +57,37 @@
 //        to control the width of a column. Default is 200.
 //       there's the macro N_ALLOW_DEBUG that you can define (either  to a hardcoded value or a variable)
 //        to allow *debug* information (like logging success and co). Default is false.
+//
+// NOTE: If you use reflective, you can change neam::r::conf::integrate_with_n_debug to disable/enable integration with
+//       reflective. (currently the default value is to integrate neam::debug::* with reflective).
+//       If you don't use reflective (what a shame...), just forget everything about that message.
+//
 
 #ifndef N_COLUMN_WIDTH
 #define N_COLUMN_WIDTH 100
 #endif
 #ifndef N_ALLOW_DEBUG
 #define N_ALLOW_DEBUG false
+#endif
+
+// integration with reflective
+#ifdef N_REFLECTIVE_PRESENT
+#define _NEAM_DEBUG_GET_ACTIVE_FUNC   if (neam::r::conf::integrate_with_n_debug && neam::r::function_call::get_active_function_call()) neam::r::function_call::get_active_function_call()
+#define NEAM_DEBUG_IND_FAIL(rsn)      _NEAM_DEBUG_GET_ACTIVE_FUNC->fail(rsn)
+namespace neam
+{
+  namespace debug
+  {
+    namespace internal
+    {
+      static const neam::r::reason error_detected_reason = neam::r::reason {"neam::debug error detected"};
+      static const neam::r::reason assert_failled_reason = neam::r::reason {"neam::debug assertion failed"};
+    }
+  }
+}
+#else
+#define NEAM_DEBUG_IND_FAIL(rsn)             /* :| */
+#define N_REASON_INFO
 #endif
 
 namespace neam
@@ -78,7 +103,7 @@ namespace neam
 
       public:
         template<typename ReturnType>
-        static ReturnType &&_throw_exception(const char *file, size_t line, const std::string &func_call, ReturnType &&ret)
+        static ReturnType _throw_exception(const char *file, size_t line, const std::string &func_call, ReturnType ret)
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
           if (N_ALLOW_DEBUG || is_error)
@@ -88,7 +113,10 @@ namespace neam
             std::cerr << ((is_error) ? " ** " : " -- ") << message << std::endl;
 #else
             if (is_error)
+            {
+              NEAM_DEBUG_IND_FAIL(internal::error_detected_reason(file, line, message));
               neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
+            }
             else
               neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
 #endif
@@ -100,7 +128,7 @@ namespace neam
 
         // return true in case of error
         template<typename ReturnType>
-        static bool _log_and_check(const char *file, size_t line, const std::string &func_call, ReturnType &&ret)
+        static bool _log_and_check(const char *file, size_t line, const std::string &func_call, ReturnType ret)
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
           if (N_ALLOW_DEBUG || is_error)
@@ -110,7 +138,10 @@ namespace neam
             std::cerr << ((is_error) ? " ** " : " -- ") << message << std::endl;
 #else
             if (is_error)
+            {
+              NEAM_DEBUG_IND_FAIL(internal::error_detected_reason(file, line, message));
               neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
+            }
             else
               neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
 #endif
@@ -124,7 +155,7 @@ namespace neam
 
         // simply log the error and return the value 'as-is'
         template<typename ReturnType>
-        static ReturnType &&_log_and_return(const char *file, size_t line, const std::string &func_call, ReturnType &&ret)
+        static ReturnType _log_and_return(const char *file, size_t line, const std::string &func_call, ReturnType ret)
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
           if (N_ALLOW_DEBUG || is_error)
@@ -134,7 +165,10 @@ namespace neam
             std::cerr << ((is_error) ? " ** " : " -- ") << message << std::endl;
 #else
             if (is_error)
+            {
+              NEAM_DEBUG_IND_FAIL(internal::error_detected_reason(file, line, message));
               neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
+            }
             else
               neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
 #endif
@@ -150,7 +184,10 @@ namespace neam
             std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
 #else
             if (!status)
+            {
+              NEAM_DEBUG_IND_FAIL(internal::assert_failled_reason(file, line, message));
               neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << "[FAILED]: " + message << std::endl;
+            }
             else
               neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << " [SUCCESS]" << std::endl;
 #endif
@@ -167,7 +204,10 @@ namespace neam
             std::cerr << ((!status) ? " ** " : " -- ") << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << (!status ? " [FAILED]: " + message : " [SUCCESS]") << std::endl;
 #else
             if (!status)
+            {
+              NEAM_DEBUG_IND_FAIL(internal::assert_failled_reason(file, line, message));
               neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << "[FAILED]: " + message << std::endl;
+            }
             else
               neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << " [SUCCESS]" << std::endl;
 #endif
@@ -176,9 +216,9 @@ namespace neam
         }
 
         template<typename ReturnType>
-        static ReturnType &&_dummy(ReturnType &&ret)
+        static inline ReturnType _dummy(ReturnType ret)
         {
-          return std::move(ret);
+          return (ret);
         }
 
 #if not defined N_DISABLE_ASSERTS and not defined N_DISABLE_CHECKS
@@ -187,7 +227,7 @@ namespace neam
 #define n_assert_and_return(test, message)        _assert_and_return(__FILE__, __LINE__, #test, test, message)
 #define n_assert_and_return_exp(test, message)    assert_and_return(test, message)
 #else
-#define n_assert(test, message)                   _dummy(((test), true))
+#define n_assert(test, message)                   _dummy((test))
 #define n_assert_exp(test, message)               assert(test, message)
 #define n_assert_and_return(test, message)        _dummy(((test), true))
 #define n_assert_and_return_exp(test, message)    assert_and_return(test, message)
@@ -205,7 +245,7 @@ namespace neam
 # define n_throw_exception_exp(fnc)               _dummy(fnc)
 # define n_log_and_return(fnc)                    _dummy(fnc)
 # define n_log_and_return_exp(fnc)                _dummy(fnc)
-# define n_log_and_check(fnc)                     _dummy(fnc)
+# define n_log_and_check(fnc)                     _dummy((fnc, true))
 # define n_log_and_check_exp(fnc)                 _dummy(fnc)
 #endif
 
