@@ -36,6 +36,12 @@
 #include <sstream>
 #include "../spinlock.hpp"
 
+#ifdef _MSC_VER
+#ifndef __attribute__
+#define __attribute__(x)
+#endif
+#endif
+
 namespace neam
 {
   namespace cr
@@ -43,15 +49,18 @@ namespace neam
     namespace internal
     {
       /// \brief lock the internal mutex, begin the header
-      static constexpr struct _locker {constexpr _locker(){}} locker __attribute__((unused));
+      struct _locker {constexpr _locker(){}};
+      static constexpr _locker locker __attribute__((unused)) = _locker();
 
       /// \brief end the header (the header wil be repeated each time a neam::r::newline is send)
-      static constexpr struct _end_header {constexpr _end_header(){}} end_header __attribute__((unused));
+      struct _end_header {constexpr _end_header(){}};
+      static constexpr _end_header end_header __attribute__((unused)) = _end_header();
 
     } // namespace internal
 
     /// \brief append a newline to the streams and repeat the line header.
-    static constexpr struct _newline {constexpr _newline(){}} newline __attribute__((unused));
+    struct _newline {constexpr _newline(){}};
+  	static constexpr _newline newline __attribute__((unused)) = _newline();
 
     /// \brief multiplexing output stream (only for the << operator).
     /// This class also allow thread safe line output.
