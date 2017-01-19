@@ -180,7 +180,7 @@ namespace neam
         };
 
       public:
-
+#ifndef _MSC_VER
         template<size_t Index>
         using get_type = typename type_at_index<Index, Types...>::type;
 
@@ -266,6 +266,12 @@ namespace neam
         {
           return type_at_index<Index, Types...>::type(std::move(vals)...);
         };
+#else
+		template<size_t Index>
+        using get_type = typename type_at_index<Index, Types...>::type;
+
+		static constexpr size_t size = sizeof...(Types);
+#endif
     };
 
     // a list of types, with a static instance of the tuple

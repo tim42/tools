@@ -87,7 +87,7 @@ namespace neam
       return __builtin_bswap32(v);
 #else
       uint8_t *p = reinterpret_cast<uint8_t *>(&v);
-      return static_cast<uint32_t>(p)[0] << 24 | static_cast<uint32_t>(p)[1] << 16 | static_cast<uint32_t>(p)[2] << 8 | static_cast<uint32_t>(p)[3];
+      return static_cast<uint32_t>(p[0]) << 24 | static_cast<uint32_t>(p[1]) << 16 | static_cast<uint32_t>(p[2]) << 8 | static_cast<uint32_t>(p[3]);
 #endif
     };
     inline uint64_t swap_bytes(uint64_t v)
@@ -96,8 +96,8 @@ namespace neam
       return __builtin_bswap64(v);
 #else
       const uint8_t *p = reinterpret_cast<uint8_t *>(&v);
-      return static_cast<uint64_t>(p)[0] << 56 | static_cast<uint64_t>(p)[1] << 48 | static_cast<uint64_t>(p)[2] << 40 | static_cast<uint64_t>(p)[3] << 32
-             | static_cast<uint64_t>(p)[4] << 24 | static_cast<uint64_t>(p)[5] << 16 | static_cast<uint64_t>(p)[6] << 8 | static_cast<uint64_t>(p)[7];
+      return static_cast<uint64_t>(p[0]) << 56 | static_cast<uint64_t>(p[1]) << 48 | static_cast<uint64_t>(p[2]) << 40 | static_cast<uint64_t>(p[3]) << 32
+             | static_cast<uint64_t>(p[4]) << 24 | static_cast<uint64_t>(p[5]) << 16 | static_cast<uint64_t>(p[6]) << 8 | static_cast<uint64_t>(p[7]);
 #endif
     };
 
