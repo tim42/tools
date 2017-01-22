@@ -94,6 +94,8 @@ namespace neam
         /// \brief holds the minimal level allowed for logging
         verbosity_level log_level = verbosity_level::info;
 
+        bool no_header = false;
+
       protected:
         static multiplexed_stream &get_log_header(stream_logger &logger, const std::string &level);
 

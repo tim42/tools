@@ -74,28 +74,44 @@ neam::cr::multiplexed_stream &neam::cr::stream_logger::get_log_header(stream_log
 neam::cr::multiplexed_stream &neam::cr::stream_logger::debug()
 {
   if (log_level <= verbosity_level::debug)
+  {
+    if (no_header)
+      return streams << internal::locker;
     return get_log_header(*this, "DEBUG");
+  }
   return (empty_stream << internal::locker);
 }
 
 neam::cr::multiplexed_stream &neam::cr::stream_logger::info()
 {
   if (log_level <= verbosity_level::info)
+  {
+    if (no_header)
+      return streams << internal::locker;
     return get_log_header(*this, "INFO");
+  }
   return (empty_stream << internal::locker);
 }
 
 neam::cr::multiplexed_stream &neam::cr::stream_logger::log()
 {
   if (log_level <= verbosity_level::log)
+  {
+    if (no_header)
+      return streams << internal::locker;
     return get_log_header(*this, "LOG");
+  }
   return (empty_stream << internal::locker);
 }
 
 neam::cr::multiplexed_stream &neam::cr::stream_logger::warning()
 {
   if (log_level <= verbosity_level::warning)
+  {
+    if (no_header)
+      return streams << internal::locker;
     return get_log_header(*this, "WARNING");
+  }
   return (empty_stream << internal::locker);
 }
 
@@ -104,11 +120,17 @@ neam::cr::multiplexed_stream &neam::cr::stream_logger::error()
 //   if (!do_not_taint)
 //     new neam::taint("LOG_ERR", "Error in logs");
   if (log_level <= verbosity_level::error)
+  {
+    if (no_header)
+      return streams << internal::locker;
     return get_log_header(*this, "ERROR");
+  }
   return (empty_stream << internal::locker);
 }
 
 neam::cr::multiplexed_stream &neam::cr::stream_logger::critical()
 {
+  if (no_header)
+    return streams << internal::locker;
   return get_log_header(*this, "CRITICAL");
 }
