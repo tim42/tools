@@ -44,42 +44,42 @@ namespace neam
       public:
         ObjectType *operator ->()
         {
-          return reinterpret_cast<ObjectType *>(storage);
+          return ref;
         }
 
         const ObjectType *operator ->() const
         {
-          return reinterpret_cast<const ObjectType *>(storage);
+          return ref;
         }
 
         ObjectType *operator &()
         {
-          return reinterpret_cast<ObjectType *>(storage);
+          return ref;
         }
 
         const ObjectType *operator &() const
         {
-          return reinterpret_cast<const ObjectType *>(storage);
+          return ref;
         }
 
         operator ObjectType &()
         {
-          return *reinterpret_cast<ObjectType *>(storage);
+          return *ref;
         }
 
         operator const ObjectType &() const
         {
-          return *reinterpret_cast<const ObjectType *>(storage);
+          return ref;
         }
 
         ObjectType &get()
         {
-          return *reinterpret_cast<ObjectType *>(storage);
+          return *ref;
         }
 
         const ObjectType &get() const
         {
-          return *reinterpret_cast<const ObjectType *>(storage);
+          return *ref;
         }
 
         /// \brief if call_it is true, it will call the destructor of the object
@@ -94,6 +94,7 @@ namespace neam
         void construct(Args... args)
         {
           new (&this->get()) ObjectType(std::forward<Args>(args)...);
+          do_call_destructor = true;
         }
 
         ~uninitialized()
@@ -106,6 +107,7 @@ namespace neam
       private:
         bool do_call_destructor = false;
         uint8_t storage[sizeof(ObjectType)];
+        ObjectType *const ref = (ObjectType *)(storage);
     };
   } // namespace cr
 } // namespace neam
