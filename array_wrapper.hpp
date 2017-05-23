@@ -31,6 +31,8 @@
 #ifndef __N_750243581824727426_857942864__ARRAY_WRAPPER_HPP__
 # define __N_750243581824727426_857942864__ARRAY_WRAPPER_HPP__
 
+#include <cstddef>
+
 namespace neam
 {
   // a simple array wrapper (you could use it with yaggler::shader::uniform_variable)

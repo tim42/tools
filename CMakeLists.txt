@@ -9,7 +9,7 @@ set(PROJ_VERSION_MAJOR 0)
 set(PROJ_VERSION_MINOR 1)
 set(PROJ_VERSION_SUPERMINOR 1)
 
-if (${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME})
+if (CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
   add_definitions(-D_PROJ_VERSION_MAJOR=${PROJ_VERSION_MAJOR})
   add_definitions(-D_PROJ_VERSION_MINOR=${PROJ_VERSION_MINOR})
   add_definitions(-D_PROJ_VERSION_SUPERMINOR=${PROJ_VERSION_SUPERMINOR})
@@ -55,7 +55,7 @@ endif()
 
 # some gcc/clang flags
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -std=gnu++11 -Wall -Wextra -Wno-unused-function")
+  set(PROJ_FLAGS "${PROJ_FLAGS} -std=c++1z -Wall -Wextra -Wno-unused-function")
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(PROJ_FLAGS "${PROJ_FLAGS} -finline-limit=0")
@@ -66,7 +66,7 @@ if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
   endif()
 
 elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -std=c++11 -Wall -Wextra -Wno-unused-function")
+  set(PROJ_FLAGS "${PROJ_FLAGS} -std=c++1z -Wall -Wextra -Wno-unused-function")
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(PROJ_FLAGS "${PROJ_FLAGS}")
@@ -82,7 +82,7 @@ if (NOT TARGET ${PROJ_APP})
   add_definitions(${PROJ_FLAGS})
 
   set(PROJ_SOURCES  logger/logger.cpp
-                    
+                    test.cpp
   )
   add_library(${PROJ_APP} STATIC ${PROJ_SOURCES})
 

@@ -54,8 +54,12 @@ namespace neam
     // strlen function
     inline static constexpr size_t strlen(const char *const str)
     {
-//       return str ? internal::strlen(str) : 0; // GCC 5.2.1 HATE this on constexpr string_t...
       return internal::strlen(str);
+    }
+
+    inline static constexpr size_t strlen(std::nullptr_t)
+    {
+      return 0;
     }
 
     // a safe strlen function

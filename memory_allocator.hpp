@@ -67,7 +67,7 @@ namespace neam
           }
           fallback_allocator = fallback;
 
-          first = new(std::nothrow) memory_chunk;
+          first = new memory_chunk;
           last = first;
           first->data = reinterpret_cast<uint8_t *>(area);
           first->size = size;

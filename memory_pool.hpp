@@ -38,8 +38,8 @@ namespace neam
   namespace cr
   {
     /// \brief this class provide a fast and easy way to deal with 
-    /// \param ObjectType is the type of object stored in the pool
-    /// \param ObjectCount is the number of object per chunk.
+    /// \tparam ObjectType is the type of object stored in the pool
+    /// \tparam ObjectCount is the number of object per chunk.
     ///
     /// \attention This pool is oversimplified. Some allocation schemes won't be optimal at all...
     /// an optimal use would be that after a short initialization phase, the number

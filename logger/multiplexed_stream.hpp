@@ -60,7 +60,7 @@ namespace neam
 
     /// \brief append a newline to the streams and repeat the line header.
     struct _newline {constexpr _newline(){}};
-  	static constexpr _newline newline __attribute__((unused)) = _newline();
+    static constexpr _newline newline __attribute__((unused)) = _newline();
 
     /// \brief multiplexing output stream (only for the << operator).
     /// This class also allow thread safe line output.
@@ -74,34 +74,30 @@ namespace neam
 
         multiplexed_stream(std::initializer_list<std::pair<std::ostream &, bool>> _oss)
         {
-          os_delete.reserve(_oss.size());
-          for (auto & it : _oss)
+          for (auto &it : _oss)
           {
-            oss.emplace_back(&it.first);
-            os_delete.push_back(it.second);
+            oss.emplace_back(it);
           }
         }
 
         ~multiplexed_stream()
         {
-          size_t i = 0;
-          for (auto & it : oss)
+          for (auto &it : oss)
           {
-            if (os_delete[i++])
-              delete it;
+            if (it.second)
+              delete &it.first;
           }
         }
 
         void add_stream(std::ostream &os, bool do_delete = false)
         {
-          oss.emplace_back(&os);
-          os_delete.push_back(do_delete);
+          oss.emplace_back(os, do_delete);
         }
 
 #define _N__op(T)        \
   multiplexed_stream &operator << (T type)          \
   {                                                 \
-    for (auto &it : oss) *it << (type);             \
+    for (auto &it : oss) it.first << (type);             \
     if (!header_ended)                              \
       os_header << type;                            \
     return *this;                                   \
@@ -131,7 +127,8 @@ namespace neam
         _N__op(func_2)
         multiplexed_stream &operator << (func_3 type)
         {
-          for (auto & it : oss) *it << (type);
+          for (auto &it : oss)
+            it.first << (type);
           if (type == static_cast<func_3>(std::endl))
             lock.unlock();
           return *this;
@@ -168,8 +165,7 @@ namespace neam
 
 
       protected:
-        std::list<std::ostream *> oss;
-        std::vector<bool> os_delete;
+        std::vector<std::pair<std::ostream &, bool>> oss;
         neam::spinlock lock;
         std::ostringstream os_header;
         bool header_ended = false;

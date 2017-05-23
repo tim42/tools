@@ -62,7 +62,7 @@ double neam::cr::stream_logger::get_time() const
   return std::chrono::duration_cast<std::chrono::microseconds>(now - launch_time).count() / 1000000.0f;
 }
 
-neam::cr::multiplexed_stream &neam::cr::stream_logger::get_log_header(stream_logger &logger, const std::string &level)
+neam::cr::multiplexed_stream &neam::cr::stream_logger::get_log_header(stream_logger &logger, const char *level)
 {
   std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
   return logger.streams << internal::locker << "[" << std::setw(14) << std::setfill(' ') << std::fixed << std::setprecision(6) << std::right << std::chrono::duration_cast<std::chrono::microseconds>(now - logger.launch_time).count() / 1000000.0f << "] "
@@ -117,8 +117,6 @@ neam::cr::multiplexed_stream &neam::cr::stream_logger::warning()
 
 neam::cr::multiplexed_stream &neam::cr::stream_logger::error()
 {
-//   if (!do_not_taint)
-//     new neam::taint("LOG_ERR", "Error in logs");
   if (log_level <= verbosity_level::error)
   {
     if (no_header)

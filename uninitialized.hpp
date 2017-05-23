@@ -31,6 +31,7 @@
 #define __N_177204756238143312_155459372_UNINITIALIZED_HPP__
 
 #include <cstdint>
+#include <memory>
 
 namespace neam
 {
@@ -44,49 +45,49 @@ namespace neam
       public:
         ObjectType *operator ->()
         {
-          return ref;
+          return (ObjectType *)(storage);
         }
 
         const ObjectType *operator ->() const
         {
-          return ref;
+          return (ObjectType *)(storage);
         }
 
         ObjectType *operator &()
         {
-          return ref;
+          return (ObjectType *)(storage);
         }
 
         const ObjectType *operator &() const
         {
-          return ref;
+          return (ObjectType *)(storage);
         }
 
         operator ObjectType &()
         {
-          return *ref;
+          return *(ObjectType *)(storage);
         }
 
         operator const ObjectType &() const
         {
-          return ref;
+          return (ObjectType *)(storage);
         }
 
         ObjectType &get()
         {
-          return *ref;
+          return *(ObjectType *)(storage);
         }
 
         const ObjectType &get() const
         {
-          return *ref;
+          return *(ObjectType *)(storage);
         }
 
         /// \brief if call_it is true, it will call the destructor of the object
         /// when the life of the instance ends. The default is to NOT call the destructor
         void call_destructor(bool call_it = true)
         {
-          do_call_destructor = call_it;
+          storage[sizeof(ObjectType)] = call_it;
         }
 
         /// \brief construct the object
@@ -94,20 +95,18 @@ namespace neam
         void construct(Args... args)
         {
           new (&this->get()) ObjectType(std::forward<Args>(args)...);
-          do_call_destructor = true;
+          storage[sizeof(ObjectType)] = true;
         }
 
         ~uninitialized()
         {
-          if (do_call_destructor)
+          if (storage[sizeof(ObjectType)])
             this->get().~ObjectType();
         }
 
         using object_type = ObjectType;
       private:
-        bool do_call_destructor = false;
-        uint8_t storage[sizeof(ObjectType)];
-        ObjectType *const ref = (ObjectType *)(storage);
+        uint8_t storage[1 + sizeof(ObjectType)];
     };
   } // namespace cr
 } // namespace neam

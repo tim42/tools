@@ -81,17 +81,12 @@ namespace neam
         using type = ObjectType;
 
 
-        // defined if needed :) (again: no overhead if unused)
         // To use this, you MUST have a constexpr constructor.
         template<typename EmbeddedType>
         struct embed
         {
           constexpr embed() {}
 
-//           operator EmbeddedType &() __attribute__((deprecated))
-//           {
-//             return value;
-//           }
           constexpr operator EmbeddedType() const
           {
             return ObjectType{Values::get()...};
@@ -104,11 +99,8 @@ namespace neam
           }
 
           using type = EmbeddedType;
-
-          static constexpr EmbeddedType value __attribute__((deprecated)) = ObjectType(Values::get()...);
         };
 
-        // defined if needed :) (again: no overhead if unused)
         // To use this, you could have a non-constexpr constructor. (but ::value is NOT defined).
         template<typename EmbeddedType>
         struct cr_embed
@@ -127,7 +119,6 @@ namespace neam
           }
 
           using type = EmbeddedType;
-
         };
 
         // use a placement new on an existing object

@@ -81,7 +81,7 @@ namespace neam
         /// \brief return the logger time.
         double get_time() const;
 
-        enum class verbosity_level
+        enum class verbosity_level : uint32_t
         {
           debug = 0,
           info = 1,
@@ -97,7 +97,7 @@ namespace neam
         bool no_header = false;
 
       protected:
-        static multiplexed_stream &get_log_header(stream_logger &logger, const std::string &level);
+        static multiplexed_stream &get_log_header(stream_logger &logger, const char *level);
 
       protected:
         multiplexed_stream empty_stream; // holds nothing, "multiplex" no stream.

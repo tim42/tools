@@ -40,7 +40,7 @@
 
 namespace neam
 {
-  namespace embed
+  namespace embed_helper
   {
     template<typename Type, int64_t Mantissa, int64_t Exp>
     struct _floating_point {};
@@ -61,14 +61,12 @@ namespace neam
         return get_val();
       }
 
-      // the preferred way to use this class :)
       constexpr static float get()
       {
         return get_val();
       }
 
       using type = float;
-      static constexpr float value __attribute__((deprecated)) = get_val();
     };
 
     // for double (Exp is a power of 2)
@@ -87,14 +85,12 @@ namespace neam
         return get_val();
       }
 
-      // the preferred way to use this class :)
       constexpr static double get()
       {
         return get_val();
       }
 
       using type = double;
-      static constexpr double value __attribute__((deprecated)) = get_val();
     };
 
     // embedding for floats/doubles
@@ -106,7 +102,7 @@ namespace neam
 #define N_EMBED_FLOAT(Mantissa, Exp)        neam::embed::floating_point<Mantissa, Exp>
 #define N_EMBED_DOUBLE(Mantissa, Exp)        neam::embed::double_floating_point<Mantissa, Exp>
 
-  } // namespace embed
+  } // namespace embed_helper
 } // namespace neam
 
 #endif /*__N_231085794123560898_1536835867__TPL_FLOAT_HPP__*/
