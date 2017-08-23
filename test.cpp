@@ -6,7 +6,6 @@
 #include "ct_list.hpp"
 
 #include "hash/fnv1a.hpp"
-#include "hash/murmur3.hpp"
 
 static_assert(std::is_same_v<decltype(neam::ct::hash::fnv1a<32>("coucou")), uint32_t>, "fnv1a: BAD return type");
 static_assert(std::is_same_v<decltype(neam::ct::hash::fnv1a<64>("coucou")), uint64_t>, "fnv1a: BAD return type");
