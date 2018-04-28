@@ -39,74 +39,103 @@ namespace neam
   {
     /// \brief Create an uninitialized storage that yields a given type.
     /// This allows to create uninitialized objects on the stack or as class/struct members
+    /// \warning The default behavior is to not call the destructor at the end of the life of uninitialized<>
     template<typename ObjectType>
     class uninitialized
     {
+      private:
+        static constexpr uint8_t is_constructed_bit = 1 << 0;
+        static constexpr uint8_t destructor_call_bit = 1 << 1;
+        static constexpr uint8_t is_constructed_mask = ~is_constructed_bit;
+        static constexpr uint8_t destructor_call_mask = ~destructor_call_bit;
+
       public:
-        ObjectType *operator ->()
-        {
-          return (ObjectType *)(storage);
-        }
+        ObjectType *operator ->() noexcept { return (ObjectType *)(storage); }
 
-        const ObjectType *operator ->() const
-        {
-          return (ObjectType *)(storage);
-        }
+        const ObjectType *operator ->() const noexcept { return (ObjectType *)(storage); }
 
-        ObjectType *operator &()
-        {
-          return (ObjectType *)(storage);
-        }
+        ObjectType *operator &() { return (ObjectType *)(storage); }
 
-        const ObjectType *operator &() const
-        {
-          return (ObjectType *)(storage);
-        }
+        const ObjectType *operator &() const noexcept { return (ObjectType *)(storage); }
 
-        operator ObjectType &()
-        {
-          return *(ObjectType *)(storage);
-        }
+        operator ObjectType &() & noexcept { return *(ObjectType *)(storage); }
+        operator ObjectType &&() && noexcept { return *(ObjectType *)(storage); }
 
-        operator const ObjectType &() const
-        {
-          return (ObjectType *)(storage);
-        }
+        operator const ObjectType &() const & noexcept { return (ObjectType *)(storage); }
+        operator const ObjectType &&() const && noexcept { return (ObjectType *)(storage); }
 
-        ObjectType &get()
-        {
-          return *(ObjectType *)(storage);
-        }
-
-        const ObjectType &get() const
-        {
-          return *(ObjectType *)(storage);
-        }
+        ObjectType &get() & noexcept { return *(ObjectType *)(storage); }
+        ObjectType &&get() && noexcept { return *(ObjectType *)(storage); }
+        const ObjectType &get() const & noexcept { return *(ObjectType *)(storage); }
+        const ObjectType &&get() const && noexcept { return *(ObjectType *)(storage); }
 
         /// \brief if call_it is true, it will call the destructor of the object
         /// when the life of the instance ends. The default is to NOT call the destructor
-        void call_destructor(bool call_it = true)
+        void schedule_destructor_call(bool call_it = true) noexcept
         {
-          storage[sizeof(ObjectType)] = call_it;
+          storage[sizeof(ObjectType)] =
+              (storage[sizeof(ObjectType)] & destructor_call_mask)
+            | (call_it ? destructor_call_bit : 0);
+        }
+
+        /// \brief Return whether or not the object is constructed
+        bool is_constructed() const noexcept
+        {
+          return storage[sizeof(ObjectType)] & is_constructed_bit;
         }
 
         /// \brief construct the object
+        /// \warning Does not call the destructor if the object has previously been constructed
         template<typename... Args>
-        void construct(Args... args)
+        void construct(Args &&... args) noexcept(noexcept(ObjectType(std::forward<Args>(args)...)))
         {
           new (&this->get()) ObjectType(std::forward<Args>(args)...);
-          storage[sizeof(ObjectType)] = true;
+          storage[sizeof(ObjectType)] |= is_constructed_bit;
         }
 
-        ~uninitialized()
+        /// \brief Change the constructed flag of the object
+        void mark_as_constructed(bool constructed) noexcept
         {
-          if (storage[sizeof(ObjectType)])
+          if (constructed)
+            storage[sizeof(ObjectType)] |= is_constructed_bit;
+          else
+            storage[sizeof(ObjectType)] &= is_constructed_mask;
+        }
+
+        /// \brief call the destructor
+        /// \param force Force a call to the destructor, even if the object is marked as not-created
+        void destruct(bool force = false) noexcept(noexcept(~ObjectType()))
+        {
+          if (force || is_constructed())
+          {
             this->get().~ObjectType();
+            storage[sizeof(ObjectType)] &= is_constructed_mask;
+          }
+        }
+
+        ~uninitialized() noexcept(noexcept(~ObjectType()))
+        {
+          if ((storage[sizeof(ObjectType)] & (is_constructed_bit | destructor_call_bit)) == (is_constructed_bit | destructor_call_bit))
+            destruct();
+        }
+
+        uninitialized() noexcept = default;
+
+        uninitialized(ObjectType&& o) noexcept(noexcept(construct(std::move(o)))) { construct(std::move(o)); }
+        uninitialized(const ObjectType& o) noexcept(noexcept(construct(o))) { construct(o); }
+
+        template<typename Arg>
+        uninitialized& operator = (Arg&& a) noexcept(noexcept(get() = std::forward<Arg>(a)) && noexcept(construct(std::forward<Arg>(a))))
+        {
+          if (is_constructed())
+            get() = std::forward<Arg>(a);
+          else
+            construct(std::forward<Arg>(a));
         }
 
         using object_type = ObjectType;
       private:
-        uint8_t storage[1 + sizeof(ObjectType)];
+        alignas(ObjectType) uint8_t storage[1 + sizeof(ObjectType)];
     };
   } // namespace cr
 } // namespace neam
