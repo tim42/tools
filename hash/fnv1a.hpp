@@ -51,13 +51,14 @@ namespace neam
         using fnv_prime = type_list<embed<0x01000193u>, embed<0x100000001b3u>>;
       } // namespace internal
 
-      template<size_t BitCount>
-      static constexpr auto fnv1a(const uint8_t *const data, size_t len) -> auto
+      template<size_t BitCount, typename T>
+      static constexpr auto fnv1a(const T *const data, size_t len) -> auto
       {
+        static_assert(sizeof(T) == 1, "We only support 1-byte types for FNV1A");
         static_assert(BitCount == 32 || BitCount == 64, "We only support 32 and 64bit FNV-1a hash function");
 
         constexpr size_t index = BitCount / 32 - 1;
-        static_assert(index <= 0, "We only support 32 and 64bit FNV-1a has function");
+        static_assert(index <= 1, "We only support 32 and 64bit FNV-1a has function");
 
         using type = list::get_type<internal::fnv_return_types, index>;
 

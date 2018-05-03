@@ -43,7 +43,7 @@ namespace neam
     public:
       using type = Type;
 
-      constexpr embed() {}
+      constexpr embed() noexcept = default;
 
       constexpr operator Type () const
       {

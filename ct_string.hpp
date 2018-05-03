@@ -40,6 +40,81 @@ namespace neam
 
   namespace ct
   {
+    /// \brief C-String + Size from array
+    struct string
+    {
+      string() = delete;
+      ~string() noexcept = default;
+
+      template<size_t N>
+      constexpr string(const char (&_str)[N]) noexcept : str(_str), size(N - 1) {}
+      constexpr string(const string& o) noexcept : str(o.str), size(o.size) {}
+      constexpr string(const char* _str, size_t _size) noexcept : str(_str), size(_size) {}
+      template<size_t N>
+      constexpr string &operator = (const char (&_str)[N]) noexcept
+      {
+        str = _str;
+        size = N - 1;
+        return *this;
+      }
+      constexpr string &operator = (const string &o) noexcept
+      {
+        str = (o.str);
+        size = (o.size);
+        return *this;
+      }
+
+      constexpr const char* begin() const noexcept { return str; }
+      constexpr const char* end() const noexcept { return str + size; }
+
+      constexpr size_t find(const string& substr) const noexcept
+      {
+        if (substr.size > size)
+          return ~0ul;
+        else if (substr.size == size)
+          return (substr == *this ? 0 : ~0ul);
+        else if (!substr.size)
+          return 0;
+
+        for (size_t i = 0; i < size - substr.size; ++i)
+        {
+          if (str[i] == substr.str[0])
+          {
+            size_t j = 1;
+            for (; j < substr.size && str[i + j] == substr.str[j]; ++j) {}
+            if (j == substr.size)
+              return i;
+          }
+        }
+        return ~0ul;
+      }
+
+      constexpr string pad(size_t begin_offset, size_t end_offset) const noexcept
+      {
+        return { str + begin_offset, size - end_offset - begin_offset };
+      }
+
+      constexpr bool operator == (const string& o) const noexcept
+      {
+        if (o.size != size)
+          return false;
+        for (size_t i = 0; i < size; ++i)
+        {
+          if (o.str[i] != str[i])
+            return false;
+        }
+        return true;
+      }
+
+      constexpr bool operator != (const string& o) const noexcept
+      {
+        return !(*this == o);
+      }
+
+      const char* str;
+      size_t size;
+    };
+
     namespace internal
     {
       // strlen function
@@ -52,6 +127,11 @@ namespace neam
     static constexpr size_t npos = static_cast<size_t>(-1);
 
     // strlen function
+    template<size_t N>
+    inline static constexpr size_t strlen(const char (&)[N])
+    {
+      return N - 1;
+    }
     inline static constexpr size_t strlen(const char *const str)
     {
       return internal::strlen(str);

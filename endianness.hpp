@@ -48,99 +48,102 @@ namespace neam
       }
     } // namespace internal
 
-    /// \brief Test if the target architecture is little endian
-    constexpr bool is_little_endian()
+    namespace
     {
-      // At least it works on GCC and Clang.
+      /// \brief Test if the target architecture is little endian
+      constexpr bool is_little_endian()
+      {
+        // At least it works on GCC and Clang.
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-      return 1;
+        return 1;
 #elif defined(__BYTE_ORDER__)
-      return 0;
+        return 0;
 #else
 #warning defaulting to little endian
-      return 1; // WARNING
+        return 1; // WARNING
 #endif
-    }
-    /// \brief Test if the target architecture is big endian
-    constexpr bool is_big_endian()
-    {
-      return !is_little_endian();
-    }
+      }
+      /// \brief Test if the target architecture is big endian
+      constexpr bool is_big_endian()
+      {
+        return !is_little_endian();
+      }
 
-    // 8 bit thing: nothing to do
-    constexpr inline uint8_t htole(uint8_t v) { return v; };
-    constexpr inline int8_t htole(int8_t v) { return v; };
-    constexpr inline uint8_t htobe(uint8_t v) { return v; };
-    constexpr inline int8_t htobe(int8_t v) { return v; };
-    constexpr inline uint8_t letoh(uint8_t v) { return v; };
-    constexpr inline int8_t letoh(int8_t v) { return v; };
-    constexpr inline uint8_t betoh(uint8_t v) { return v; };
-    constexpr inline int8_t betoh(int8_t v) { return v; };
+      // 8 bit thing: nothing to do
+      constexpr inline uint8_t htole(uint8_t v) { return v; };
+      constexpr inline int8_t htole(int8_t v) { return v; };
+      constexpr inline uint8_t htobe(uint8_t v) { return v; };
+      constexpr inline int8_t htobe(int8_t v) { return v; };
+      constexpr inline uint8_t letoh(uint8_t v) { return v; };
+      constexpr inline int8_t letoh(int8_t v) { return v; };
+      constexpr inline uint8_t betoh(uint8_t v) { return v; };
+      constexpr inline int8_t betoh(int8_t v) { return v; };
 
 
 #ifndef __has_builtin         // Optional of course
   #define __has_builtin(x) 0  // Compatibility with non-clang compilers
 #endif
-    constexpr inline uint16_t swap_bytes(uint16_t v) { return ((v & 0x00FF) << 8) | ((v & 0xFF00) >> 8); };
-    inline uint32_t swap_bytes(uint32_t v)
-    {
+      constexpr inline uint16_t swap_bytes(uint16_t v) { return ((v & 0x00FF) << 8) | ((v & 0xFF00) >> 8); };
+      inline uint32_t swap_bytes(uint32_t v)
+      {
 #if (defined(__GNUC__) || (defined(__clang__) && __has_builtin(__builtin_bswap32)))
-      return __builtin_bswap32(v);
+        return __builtin_bswap32(v);
 #else
-      uint8_t *p = reinterpret_cast<uint8_t *>(&v);
-      return static_cast<uint32_t>(p[0]) << 24 | static_cast<uint32_t>(p[1]) << 16 | static_cast<uint32_t>(p[2]) << 8 | static_cast<uint32_t>(p[3]);
+        uint8_t *p = reinterpret_cast<uint8_t *>(&v);
+        return static_cast<uint32_t>(p[0]) << 24 | static_cast<uint32_t>(p[1]) << 16 | static_cast<uint32_t>(p[2]) << 8 | static_cast<uint32_t>(p[3]);
 #endif
-    };
-    inline uint64_t swap_bytes(uint64_t v)
-    {
+      };
+      inline uint64_t swap_bytes(uint64_t v)
+      {
 #if (defined(__GNUC__) || (defined(__clang__) && __has_builtin(__builtin_bswap64)))
-      return __builtin_bswap64(v);
+        return __builtin_bswap64(v);
 #else
-      const uint8_t *p = reinterpret_cast<uint8_t *>(&v);
-      return static_cast<uint64_t>(p[0]) << 56 | static_cast<uint64_t>(p[1]) << 48 | static_cast<uint64_t>(p[2]) << 40 | static_cast<uint64_t>(p[3]) << 32
-             | static_cast<uint64_t>(p[4]) << 24 | static_cast<uint64_t>(p[5]) << 16 | static_cast<uint64_t>(p[6]) << 8 | static_cast<uint64_t>(p[7]);
+        const uint8_t *p = reinterpret_cast<uint8_t *>(&v);
+        return static_cast<uint64_t>(p[0]) << 56 | static_cast<uint64_t>(p[1]) << 48 | static_cast<uint64_t>(p[2]) << 40 | static_cast<uint64_t>(p[3]) << 32
+              | static_cast<uint64_t>(p[4]) << 24 | static_cast<uint64_t>(p[5]) << 16 | static_cast<uint64_t>(p[6]) << 8 | static_cast<uint64_t>(p[7]);
 #endif
-    };
+      };
 
-    template<typename Type>
-    inline Type htole(Type v)
-    {
-      static_assert(sizeof(v) <= sizeof(uint64_t), "Type must have a size below 64bit");
-      static_assert(std::is_arithmetic<Type>::value, "Type must be an arithmetic type");
-      return is_little_endian() ? v : swap_bytes(v);
-    }
-    template<typename Type>
-    inline Type htobe(Type v)
-    {
-      static_assert(sizeof(v) <= sizeof(uint64_t), "Type must have a size below 64bit");
-      static_assert(std::is_arithmetic<Type>::value, "Type must be an arithmetic type");
-      return is_big_endian() ? v : swap_bytes(v);
-    }
-    template<typename Type>
-    inline Type letoh(Type v)
-    {
-      static_assert(sizeof(v) <= sizeof(uint64_t), "Type must have a size below 64bit");
-      static_assert(std::is_arithmetic<Type>::value, "Type must be an arithmetic type");
-      return is_little_endian() ? v : swap_bytes(v);
-    }
-    template<typename Type>
-    inline Type betoh(Type v)
-    {
-      static_assert(sizeof(v) <= sizeof(uint64_t), "Type must have a size below 64bit");
-      static_assert(std::is_arithmetic<Type>::value, "Type must be an arithmetic type");
-      return is_big_endian() ? v : swap_bytes(v);
-    }
+      template<typename Type>
+      inline Type htole(Type v)
+      {
+        static_assert(sizeof(v) <= sizeof(uint64_t), "Type must have a size below 64bit");
+        static_assert(std::is_arithmetic<Type>::value, "Type must be an arithmetic type");
+        return is_little_endian() ? v : swap_bytes(v);
+      }
+      template<typename Type>
+      inline Type htobe(Type v)
+      {
+        static_assert(sizeof(v) <= sizeof(uint64_t), "Type must have a size below 64bit");
+        static_assert(std::is_arithmetic<Type>::value, "Type must be an arithmetic type");
+        return is_big_endian() ? v : swap_bytes(v);
+      }
+      template<typename Type>
+      inline Type letoh(Type v)
+      {
+        static_assert(sizeof(v) <= sizeof(uint64_t), "Type must have a size below 64bit");
+        static_assert(std::is_arithmetic<Type>::value, "Type must be an arithmetic type");
+        return is_little_endian() ? v : swap_bytes(v);
+      }
+      template<typename Type>
+      inline Type betoh(Type v)
+      {
+        static_assert(sizeof(v) <= sizeof(uint64_t), "Type must have a size below 64bit");
+        static_assert(std::is_arithmetic<Type>::value, "Type must be an arithmetic type");
+        return is_big_endian() ? v : swap_bytes(v);
+      }
 
-    // WARNING: This is not garanteed to work !
-    inline float htole(float v) { return is_little_endian() ? v : internal::raw_cast<float>(htole(internal::raw_cast<uint32_t>(v))); }
-    inline float htobe(float v) { return is_little_endian() ? v : internal::raw_cast<float>(htobe(internal::raw_cast<uint32_t>(v))); }
-    inline double htole(double v) { return is_little_endian() ? v : internal::raw_cast<double>(htole(internal::raw_cast<uint64_t>(v))); }
-    inline double htobe(double v) { return is_little_endian() ? v : internal::raw_cast<double>(htobe(internal::raw_cast<uint64_t>(v))); }
+      // WARNING: This is not garanteed to work !
+      inline float htole(float v) { return is_little_endian() ? v : internal::raw_cast<float>(htole(internal::raw_cast<uint32_t>(v))); }
+      inline float htobe(float v) { return is_little_endian() ? v : internal::raw_cast<float>(htobe(internal::raw_cast<uint32_t>(v))); }
+      inline double htole(double v) { return is_little_endian() ? v : internal::raw_cast<double>(htole(internal::raw_cast<uint64_t>(v))); }
+      inline double htobe(double v) { return is_little_endian() ? v : internal::raw_cast<double>(htobe(internal::raw_cast<uint64_t>(v))); }
 
-    inline float letoh(float v) { return is_little_endian() ? v : internal::raw_cast<float>(letoh(internal::raw_cast<uint32_t>(v))); }
-    inline float betoh(float v) { return is_little_endian() ? v : internal::raw_cast<float>(betoh(internal::raw_cast<uint32_t>(v))); }
-    inline double letoh(double v) { return is_little_endian() ? v : internal::raw_cast<double>(letoh(internal::raw_cast<uint64_t>(v))); }
-    inline double betoh(double v) { return is_little_endian() ? v : internal::raw_cast<double>(betoh(internal::raw_cast<uint64_t>(v))); }
+      inline float letoh(float v) { return is_little_endian() ? v : internal::raw_cast<float>(letoh(internal::raw_cast<uint32_t>(v))); }
+      inline float betoh(float v) { return is_little_endian() ? v : internal::raw_cast<float>(betoh(internal::raw_cast<uint32_t>(v))); }
+      inline double letoh(double v) { return is_little_endian() ? v : internal::raw_cast<double>(letoh(internal::raw_cast<uint64_t>(v))); }
+      inline double betoh(double v) { return is_little_endian() ? v : internal::raw_cast<double>(betoh(internal::raw_cast<uint64_t>(v))); }
+    }
   } // namespace ct
 } // namespace neam
 

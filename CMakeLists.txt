@@ -46,7 +46,7 @@ set(LIBRARY_OUTPUT_PATH "${CMAKE_CURRENT_BINARY_DIR}/libs")
 # flags
 # general flags
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -O0 -g3")
+  set(PROJ_FLAGS "${PROJ_FLAGS} -O0 -g")
 else(CMAKE_BUILD_TYPE STREQUAL "Release")
   set(PROJ_FLAGS "${PROJ_FLAGS} -DNDEBUG")
 #else(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
@@ -55,10 +55,10 @@ endif()
 
 # some gcc/clang flags
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -std=c++1z -Wall -Wextra -Wno-unused-function")
+  set(PROJ_FLAGS "${PROJ_FLAGS} -std=gnu++17 -Wall -Wextra -Wno-unused-function")
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(PROJ_FLAGS "${PROJ_FLAGS} -finline-limit=0")
+#    set(PROJ_FLAGS "${PROJ_FLAGS} -finline-limit=0")
   else(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(PROJ_FLAGS "${PROJ_FLAGS} -O3")
 #  else(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
@@ -66,7 +66,7 @@ if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
   endif()
 
 elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -std=c++1z -Wall -Wextra -Wno-unused-function")
+  set(PROJ_FLAGS "${PROJ_FLAGS} -std=c++17 -Wall -Wextra -Wno-unused-function")
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(PROJ_FLAGS "${PROJ_FLAGS}")
@@ -80,6 +80,7 @@ endif()
 # build a static lib
 if (NOT TARGET ${PROJ_APP})
   add_definitions(${PROJ_FLAGS})
+  message(STATUS ${PROJ_FLAGS})
 
   set(PROJ_SOURCES  logger/logger.cpp
                     test.cpp
@@ -93,6 +94,11 @@ if (NOT TARGET ${PROJ_APP})
           PATTERN ".git" EXCLUDE
           PATTERN "cmake" EXCLUDE
           PATTERN "samples" EXCLUDE)
+
+  if (${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME})
+    add_executable(${PROJ_APP}_test test_exec.cpp)
+    target_link_libraries(${PROJ_APP})
+  endif()
 endif()
 
 # export project name to parent project

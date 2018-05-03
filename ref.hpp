@@ -30,40 +30,33 @@
 
 #ifndef __N_462308859677856537_1340905228__REF_HPP__
 # define __N_462308859677856537_1340905228__REF_HPP__
+
 #include <type_traits>
+#include <utility>
 
 namespace neam
 {
   namespace cr
   {
-    // a reference struct
+    /// \brief A struct holding a reference
     template<typename Type>
     struct ref
     {
-      constexpr ref(Type &_value) : value(_value) {}
+      constexpr ref(Type &_value) noexcept : value(_value) {}
 
-      operator Type& ()
-      {
-        return value;
-      }
-      operator const Type& () const
-      {
-        return value;
-      }
+      operator Type& () & { return value; }
+      operator Type&& () && { return value; }
+      operator const Type& () const & { return value; }
+      operator const Type&& () const && { return value; }
 
       Type &value;
     };
 
     // helpers
     template<typename RefType>
-    constexpr ref<RefType> make_ref(RefType &value)
+    constexpr ref<RefType> make_ref(RefType&& value)
     {
-      return ref<RefType>(value);
-    }
-    template<typename RefType>
-    constexpr ref<const RefType> make_const_ref(const RefType &value)
-    {
-      return ref<const RefType>(value);
+      return ref<std::decay_t<RefType>>(std::forward<RefType>(value));
     }
 
     // type traits

@@ -39,10 +39,10 @@ namespace neam
   template<typename Type>
   struct array_wrapper
   {
-    constexpr array_wrapper(Type *_array, size_t _size) : array(_array), size(_size) {}
+    constexpr array_wrapper(Type *_array, size_t _size) noexcept : array(_array), size(_size) {}
 
     template<size_t Size>
-    constexpr array_wrapper(const Type (&_array)[Size]) : array(const_cast<Type *>(_array)), size(Size) {}
+    constexpr array_wrapper(const Type (&_array)[Size]) noexcept : array(const_cast<Type *>(_array)), size(Size) {}
 
     Type *array;
     size_t size;

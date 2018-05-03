@@ -10,6 +10,7 @@
 # define __N_343181348955182040_1435630634__SPINLOCK_HPP__
 
 #include <atomic>
+#include <thread>
 
 namespace neam
 {
@@ -17,19 +18,30 @@ namespace neam
   class spinlock
   {
     public:
-      spinlock() {}
+      spinlock() noexcept(noexcept(std::atomic_flag{})) = default;
+      ~spinlock() noexcept = default;
+      spinlock(spinlock&) = delete;
+      spinlock& operator = (spinlock&) = delete;
 
-      inline void lock()
+      inline void lock() noexcept
       {
-        while (lock_flag.test_and_set(std::memory_order_acquire));
+        unsigned it = 0;
+        while (lock_flag.test_and_set(std::memory_order_acquire))
+        {
+          if (++it < 1000)
+          {
+            std::this_thread::yield();
+            it = 0;
+          }
+        }
       }
 
-      bool try_lock()
+      bool try_lock() noexcept
       {
         return !lock_flag.test_and_set(std::memory_order_acquire);
       }
 
-      void unlock()
+      void unlock() noexcept
       {
         lock_flag.clear(std::memory_order_release);
       }

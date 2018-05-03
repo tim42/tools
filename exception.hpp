@@ -51,7 +51,7 @@ namespace neam
     public:
       explicit exception(const std::string &what_arg) noexcept : msg(what_arg) {}
       explicit exception(std::string &&what_arg) noexcept : msg(std::move(what_arg)) {}
-      virtual ~exception() {}
+      virtual ~exception() noexcept = default;
 
       virtual const char *what() const noexcept
       {
@@ -67,7 +67,7 @@ namespace neam
       typed_exception(const std::string &s) noexcept : exception(neam::demangle<ExceptionType>() + ": " + s) {}
       typed_exception(std::string && s) noexcept : exception(neam::demangle<ExceptionType>() + ": " + std::move(s)) {}
 
-      virtual ~typed_exception() {}
+      virtual ~typed_exception() = default;
   };
 
 // log the line and the file of an exception
