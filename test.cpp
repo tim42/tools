@@ -5,6 +5,7 @@
 #define NCT_TESTS
 #include "ct_list.hpp"
 #include "type_id.hpp"
+#include "bit_cast.hpp"
 
 #include "hash/fnv1a.hpp"
 

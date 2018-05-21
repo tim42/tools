@@ -31,17 +31,23 @@
 # define __N_11013861961332692490_320117215__DEMANGLE_HPP__
 
 #include <string>
+#include "compiler_detection.hpp"
+
+// clang only
+#ifdef NEAM_COMPILER_CLANG
+#include "type_id.hpp"
+#endif
 
 #ifndef __has_feature
 #define __has_feature(x) false
 #endif
 
-#if defined __GXX_RTTI || __has_feature(cxx_rtti)
+#if !defined(NEAM_COMPILER_CLANG) && (defined(__GXX_RTTI) || __has_feature(cxx_rtti))
 #include <typeinfo>
 #endif
 
-// GCC only...
-#ifdef __GNUC__
+// GCC only
+#if defined(NEAM_COMPILER_GCC)
 #include <cxxabi.h>
 #include <stdlib.h>
 
@@ -79,7 +85,9 @@ namespace neam
   template<typename Type>
   static inline std::string demangle()
   {
-#if defined __GXX_RTTI || __has_feature(cxx_rtti)
+#if defined(NEAM_COMPILER_CLANG)
+    return ct::type_name<Type>.str;
+#elif defined(__GXX_RTTI) || __has_feature(cxx_rtti)
     return demangle(typeid(Type).name());
 #else
     return "[unknow symbol: rtti disabled]";

@@ -48,14 +48,13 @@ set(LIBRARY_OUTPUT_PATH "${CMAKE_CURRENT_BINARY_DIR}/libs")
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(PROJ_FLAGS "${PROJ_FLAGS} -O0 -g")
 else(CMAKE_BUILD_TYPE STREQUAL "Release")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -DNDEBUG")
 #else(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
 #  set(PROJ_FLAGS "${PROJ_FLAGS} -DNDEBUG -fmerge-all-constants")
 endif()
 
 # some gcc/clang flags
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -std=gnu++17 -Wall -Wextra -Wno-unused-function")
+  set(PROJ_FLAGS "${PROJ_FLAGS} -std=gnu++2a -Wall -Wextra -Wno-unused-function")
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 #    set(PROJ_FLAGS "${PROJ_FLAGS} -finline-limit=0")
@@ -66,7 +65,7 @@ if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
   endif()
 
 elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -std=c++17 -Wall -Wextra -Wno-unused-function")
+  set(PROJ_FLAGS "${PROJ_FLAGS} -std=gnu++2a -Wall -Wextra -Wno-unused-function")
 
   if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(PROJ_FLAGS "${PROJ_FLAGS}")
@@ -97,7 +96,7 @@ if (NOT TARGET ${PROJ_APP})
 
   if (${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME})
     add_executable(${PROJ_APP}_test test_exec.cpp)
-    target_link_libraries(${PROJ_APP})
+    target_link_libraries(${PROJ_APP}_test ${PROJ_APP})
   endif()
 endif()
 

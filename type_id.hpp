@@ -106,7 +106,7 @@ namespace neam::ct
 #ifdef NCT_TESTS
     static_assert(neam::ct::type_name<int> == neam::ct::string{"int"});
     static_assert(neam::ct::type_name<double> == neam::ct::string{"double"});
+    static_assert(neam::ct::type_name<double[]> == neam::ct::string{"double []"});
     static_assert(neam::ct::type_name<neam::ct::string> == neam::ct::string{"neam::ct::string"});
-//     static_assert(neam::ct::type_name<neam::string_t> == neam::ct::string{"char"});
 #endif
 

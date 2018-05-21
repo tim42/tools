@@ -30,7 +30,9 @@
 #ifndef __N_1571082496879360556_301943581__LOGGER_HPP__
 # define __N_1571082496879360556_301943581__LOGGER_HPP__
 
-#include <string>
+#include <experimental/source_location>
+
+#include <string_view>
 #include <list>
 #include <fstream>
 #include <stdexcept>
@@ -40,13 +42,6 @@
 #include "../spinlock.hpp"
 
 #include "multiplexed_stream.hpp"
-
-/// \brief used to print a lovely file / line info on the log file.
-/// \see LOGGER_INFO
-#define LOGGER_INFO_TPL(f, l) std::setw(55) << std::left << std::setfill('.') << (std::string(f) + " ") << ": " << std::setw(4) << std::setfill(' ') << l << std::right << ": " << neam::cr::internal::end_header
-
-/// \brief used to print a lovely current file / line info on the log file
-#define LOGGER_INFO LOGGER_INFO_TPL(__FILE__, __LINE__)
 
 namespace neam
 {
@@ -59,27 +54,25 @@ namespace neam
         /// \brief create the stream_logger
         /// \param[in] _file the output log file
         /// \param[in] _name the name of the stream (will appear on each printed line)
-        stream_logger(const std::string &_file, const std::string &_name);
-        stream_logger(std::initializer_list<std::pair<std::ostream &, bool>> _oss, const std::string &_name);
+        stream_logger(const std::string& _file, std::string_view _name);
+        stream_logger(std::initializer_list<std::pair<std::ostream &, bool>> _oss, const std::string_view _name);
         ~stream_logger();
 
+        /// \brief Adds a new output stream to the logger
         void add_stream(std::ostream &stream, bool do_delete = false);
 
         /// \brief print a debug level message
-        multiplexed_stream &debug();
+        multiplexed_stream &debug(const std::experimental::source_location& sloc = std::experimental::source_location::current());
         /// \brief print a log level message
-        multiplexed_stream &info();
+        multiplexed_stream &info(const std::experimental::source_location& sloc = std::experimental::source_location::current());
         /// \brief print a log level message
-        multiplexed_stream &log();
+        multiplexed_stream &log(const std::experimental::source_location& sloc = std::experimental::source_location::current());
         /// \brief print a warning level message
-        multiplexed_stream &warning();
+        multiplexed_stream &warning(const std::experimental::source_location& sloc = std::experimental::source_location::current());
         /// \brief print an error level message
-        multiplexed_stream &error();
+        multiplexed_stream &error(const std::experimental::source_location& sloc = std::experimental::source_location::current());
         /// \brief print a critical level message
-        multiplexed_stream &critical();
-
-        /// \brief return the logger time.
-        double get_time() const;
+        multiplexed_stream &critical(const std::experimental::source_location& sloc = std::experimental::source_location::current());
 
         enum class verbosity_level : uint32_t
         {
@@ -92,12 +85,14 @@ namespace neam
         };
 
         /// \brief holds the minimal level allowed for logging
-        verbosity_level log_level = verbosity_level::info;
+        verbosity_level log_level = verbosity_level::debug;
 
         bool no_header = false;
 
       protected:
-        static multiplexed_stream &get_log_header(stream_logger &logger, const char *level);
+        double get_time() const;
+
+        static multiplexed_stream &get_log_header(stream_logger &logger, const char *level, const std::experimental::source_location& sloc);
 
       protected:
         multiplexed_stream empty_stream; // holds nothing, "multiplex" no stream.
