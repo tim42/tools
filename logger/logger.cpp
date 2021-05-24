@@ -36,19 +36,19 @@ namespace neam
 neam::cr::stream_logger::stream_logger(const std::string& _file, std::string_view _name)
   : streams({{*new std::ofstream(_file, std::ios_base::trunc), true}, {std::cout, false}}), name(_name), launch_time(std::chrono::system_clock::now())
 {
-  debug() << "stream_logger created from file '" << _file << "'" << '\n';
+  debug() << "stream_logger created from file '" << _file << "'" << cr::end;
 }
 
 neam::cr::stream_logger::stream_logger(std::initializer_list<std::pair<std::ostream &, bool>> _oss, std::string_view _name)
   : streams(_oss), name(_name), launch_time(std::chrono::system_clock::now())
 {
-  debug() << "stream_logger created from stream list" << '\n';
+  debug() << "stream_logger created from stream list" << cr::end;
 }
 
 
 neam::cr::stream_logger::~stream_logger()
 {
-  debug() << "stream_logger destructed" << '\n';
+  debug() << "stream_logger destructed" << cr::end;
 }
 
 void neam::cr::stream_logger::add_stream(std::ostream &stream, bool do_delete)

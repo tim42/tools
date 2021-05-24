@@ -61,7 +61,7 @@ namespace neam
       strings = backtrace_symbols(bt, num);
 
       // acquire the logger lock
-      auto &stream = neam::cr::out.warning() << LOGGER_INFO;
+      auto &stream = neam::cr::out.warning();
       stream << "#############[  B A C K T R A C E  ]#############" << neam::cr::newline
              << neam::cr::newline
              << "[ most recent call first: ]" << neam::cr::newline

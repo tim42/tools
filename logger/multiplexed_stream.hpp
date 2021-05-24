@@ -61,6 +61,8 @@ namespace neam
     /// \brief append a newline to the streams and repeat the line header.
     struct _newline {};
     [[maybe_unused]] static constexpr _newline newline = _newline{};
+    struct _end{};
+    [[maybe_unused]] static constexpr _end end = _end{};
 
     /// \brief multiplexing output stream (only for the << operator).
     /// This class also allow thread safe line output.
@@ -95,30 +97,32 @@ namespace neam
 
         typedef std::ostream &(*func_3)(std::ostream &);
 
+        multiplexed_stream &operator << (func_3 type)
+        {
+          for (auto &it : oss)
+            it.first << (type);
+          if (type == static_cast<func_3>(std::endl))
+          {
+            lock.unlock();
+          }
+          return *this;
+        }
+
         template<typename T>
         multiplexed_stream &operator << (T&& type)
         {
           using type_t = std::remove_cv_t<std::decay_t<T>>;
-          if constexpr (std::is_same_v<type_t, char>)
+          if constexpr (std::is_same_v<type_t, _end>)
           {
             for (auto &it : oss)
-              it.first << type;
-            if (type == '\n')
-              lock.unlock();
-            else if (!header_ended)
-              os_header << type;
-          }
-          else if constexpr (std::is_same_v<type_t, func_3>)
-          {
-            for (auto &it : oss)
-              it.first << (type);
-            if (type == static_cast<func_3>(std::endl))
-              lock.unlock();
+              it.first << std::endl;
+            lock.unlock();
+            return *this;
           }
           else if constexpr(std::is_same_v<type_t, internal::_locker>)
           {
             lock.lock();
-            os_header.clear();
+            os_header = std::ostringstream{};
             header_ended = false;
             for (unsigned i = 0; i < initialStates.size(); ++i)
               oss[i].first.copyfmt(initialStates[i]);

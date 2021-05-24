@@ -103,7 +103,7 @@ namespace neam
 
       public:
         template<typename ReturnType>
-        static ReturnType _throw_exception(const char *file, size_t line, const std::string &func_call, ReturnType ret)
+        static ReturnType _throw_exception(const std::string &func_call, ReturnType ret, const std::experimental::source_location& sloc = std::experimental::source_location::current())
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
           if (N_ALLOW_DEBUG || is_error)
@@ -115,10 +115,10 @@ namespace neam
             if (is_error)
             {
               NEAM_DEBUG_IND_FAIL(internal::error_detected_reason(file, line, message));
-              neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
+              neam::cr::out.error(sloc) << message << std::endl;
             }
             else
-              neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
+              neam::cr::out.debug(sloc) << message << std::endl;
 #endif
             if (is_error)
               throw ExceptionClass<ErrorClass<ReturnType>>(message);
@@ -128,7 +128,7 @@ namespace neam
 
         // return true in case of error
         template<typename ReturnType>
-        static bool _log_and_check(const char *file, size_t line, const std::string &func_call, ReturnType ret)
+        static bool _log_and_check(const std::string &func_call, ReturnType ret, const std::experimental::source_location& sloc = std::experimental::source_location::current())
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
           if (N_ALLOW_DEBUG || is_error)
@@ -140,10 +140,10 @@ namespace neam
             if (is_error)
             {
               NEAM_DEBUG_IND_FAIL(internal::error_detected_reason(file, line, message));
-              neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
+              neam::cr::out.error(sloc) << message << std::endl;
             }
             else
-              neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
+              neam::cr::out.debug(sloc) << message << std::endl;
 #endif
 
             if (is_error)
@@ -155,7 +155,7 @@ namespace neam
 
         // simply log the error and return the value 'as-is'
         template<typename ReturnType>
-        static ReturnType _log_and_return(const char *file, size_t line, const std::string &func_call, ReturnType ret)
+        static ReturnType _log_and_return(const std::string &func_call, ReturnType ret, const std::experimental::source_location& sloc = std::experimental::source_location::current())
         {
           const bool is_error = ErrorClass<ReturnType>::is_error(ret);
           if (N_ALLOW_DEBUG || is_error)
@@ -167,16 +167,16 @@ namespace neam
             if (is_error)
             {
               NEAM_DEBUG_IND_FAIL(internal::error_detected_reason(file, line, message));
-              neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
+              neam::cr::out.error(sloc) << message << std::endl;
             }
             else
-              neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << message << std::endl;
+              neam::cr::out.debug(sloc) << message << std::endl;
 #endif
           }
           return std::move(ret);
         }
 
-        static void _assert(const char *file, size_t line, const std::string &test, bool status, const std::string message)
+        static void _assert(const std::string &test, bool status, const std::string message, const std::experimental::source_location& sloc = std::experimental::source_location::current())
         {
           if (N_ALLOW_DEBUG || !status)
           {
@@ -186,17 +186,17 @@ namespace neam
             if (!status)
             {
               NEAM_DEBUG_IND_FAIL(internal::assert_failled_reason(file, line, message));
-              neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << "[FAILED]: " + message << std::endl;
+              neam::cr::out.error(sloc) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << "[FAILED]: " + message << std::endl;
             }
             else
-              neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << " [SUCCESS]" << std::endl;
+              neam::cr::out.debug(sloc) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << " [SUCCESS]" << std::endl;
 #endif
             if (!status)
               throw ExceptionClass<on_error>(test + ": assert failed: " + message);
           }
         }
 
-        static bool _assert_and_return(const char *file, size_t line, const std::string &test, bool status, const std::string message)
+        static bool _assert_and_return(const std::string &test, bool status, const std::string message, const std::experimental::source_location& sloc = std::experimental::source_location::current())
         {
           if (N_ALLOW_DEBUG || !status)
           {
@@ -206,10 +206,10 @@ namespace neam
             if (!status)
             {
               NEAM_DEBUG_IND_FAIL(internal::assert_failled_reason(file, line, message));
-              neam::cr::out.error() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << "[FAILED]: " + message << std::endl;
+              neam::cr::out.error(sloc) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << "[FAILED]: " + message << std::endl;
             }
             else
-              neam::cr::out.debug() << LOGGER_INFO_TPL(get_filename(file), line) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << " [SUCCESS]" << std::endl;
+              neam::cr::out.debug(sloc) << std::left << std::setw(N_COLUMN_WIDTH) << std::setfill('.') << (test + " ") << " [SUCCESS]" << std::endl;
 #endif
           }
           return !status;
@@ -222,9 +222,9 @@ namespace neam
         }
 
 #if not defined N_DISABLE_ASSERTS and not defined N_DISABLE_CHECKS
-#define n_assert(test, message)                   _assert(__FILE__, __LINE__, #test, test, message)
+#define n_assert(test, message)                   _assert(#test, test, message)
 #define n_assert_exp(test, message)               assert(test, message)
-#define n_assert_and_return(test, message)        _assert_and_return(__FILE__, __LINE__, #test, test, message)
+#define n_assert_and_return(test, message)        _assert_and_return(#test, test, message)
 #define n_assert_and_return_exp(test, message)    assert_and_return(test, message)
 #else
 #define n_assert(test, message)                   _dummy((test))
@@ -234,11 +234,11 @@ namespace neam
 #endif
 
 #if not defined N_DISABLE_FNC_CHECKS and not defined N_DISABLE_CHECKS
-# define n_throw_exception(fnc)                   _throw_exception(__FILE__, __LINE__, #fnc, fnc)
+# define n_throw_exception(fnc)                   _throw_exception(#fnc, fnc)
 # define n_throw_exception_exp(fnc)               throw_exception(fnc)
-# define n_log_and_check(fnc)                     _log_and_check(__FILE__, __LINE__, #fnc, fnc)
+# define n_log_and_check(fnc)                     _log_and_check(#fnc, fnc)
 # define n_log_and_check_exp(fnc)                 log_and_check(fnc)
-# define n_log_and_return(fnc)                    _log_and_return(__FILE__, __LINE__, #fnc, fnc)
+# define n_log_and_return(fnc)                    _log_and_return(#fnc, fnc)
 # define n_log_and_return_exp(fnc)                log_and_return(fnc)
 #else
 # define n_throw_exception(fnc)                   _dummy(fnc)

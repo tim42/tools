@@ -85,8 +85,8 @@ namespace neam
 # define N_PRINT_UNKNOW_EXCEPTION        std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": catched unknow exception..." << std::endl
 # define N_CATCH_ACTION(x)               catch(std::exception &e) { N_PRINT_EXCEPTION(e); x; } catch(...) { N_PRINT_UNKNOW_EXCEPTION; x; }
 #else
-# define N_PRINT_EXCEPTION(e)            neam::cr::out.error() << LOGGER_INFO << "catched exception  '" << e.what() << "'" << std::endl
-# define N_PRINT_UNKNOW_EXCEPTION        neam::cr::out.error() << LOGGER_INFO << "catched unknow exception..." << std::endl
+# define N_PRINT_EXCEPTION(e)            neam::cr::out.error() << "catched exception  '" << e.what() << "'" << std::endl
+# define N_PRINT_UNKNOW_EXCEPTION        neam::cr::out.error() << "catched unknow exception..." << std::endl
 # define N_CATCH_ACTION(x)               catch(std::exception &e) { N_PRINT_EXCEPTION(e); x; } catch(...) { N_PRINT_UNKNOW_EXCEPTION; x; }
 #endif
 #define N_CATCH                         N_CATCH_ACTION( )
@@ -95,7 +95,7 @@ namespace neam
 #ifdef N_DEBUG_USE_CERR
 # define N_ABORT                         do {std::cerr << " ** " __FILE__ ": " N_EXP_STRINGIFY(__LINE__) ": [aborting program]\n" << std::endl; std::cerr.flush(); abort();} while(0)
 #else
-# define N_ABORT                         do {neam::cr::out.error() << LOGGER_INFO << "[aborting program]\n" << std::endl; abort();} while(0)
+# define N_ABORT                         do {neam::cr::out.error() << "[aborting program]\n" << std::endl; abort();} while(0)
 #endif
 // fatal exception (call abort)
 #define N_FATAL_CATCH                   N_CATCH_ACTION(N_ABORT)
