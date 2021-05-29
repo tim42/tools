@@ -56,6 +56,11 @@ void neam::cr::stream_logger::add_stream(std::ostream &stream, bool do_delete)
   streams.add_stream(stream, do_delete);
 }
 
+void neam::cr::stream_logger::remove_stream(std::ostream &stream)
+{
+  streams.remove_stream(stream);
+}
+
 double neam::cr::stream_logger::get_time() const
 {
   std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();

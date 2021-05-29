@@ -30,9 +30,10 @@
 #ifndef __N_1961882576311675539_2078880458__MULTIPLEXED_STREAM_HPP__
 # define __N_1961882576311675539_2078880458__MULTIPLEXED_STREAM_HPP__
 
-#include <list>
+#include <algorithm>
 #include <vector>
 #include <deque>
+#include <mutex>
 #include <ostream>
 #include <sstream>
 #include "../spinlock.hpp"
@@ -64,6 +65,8 @@ namespace neam
     struct _end{};
     [[maybe_unused]] static constexpr _end end = _end{};
 
+    using stream_callback_t = void(*)(void*);
+
     /// \brief multiplexing output stream (only for the << operator).
     /// This class also allow thread safe line output.
     /// \note a proper use of the class is
@@ -91,8 +94,35 @@ namespace neam
 
         void add_stream(std::ostream &os, bool do_delete = false)
         {
-          oss.emplace_back(os, do_delete);
-          initialStates.emplace_back(nullptr).copyfmt(os);
+          const std::lock_guard<neam::spinlock> _u(lock);
+          oss.emplace_back(&os, do_delete);
+          initial_states.emplace_back(nullptr).copyfmt(os);
+        }
+
+        void remove_stream(std::ostream &os)
+        {
+          const std::lock_guard<neam::spinlock> _u(lock);
+          size_t index = std::find_if(oss.begin(), oss.end(), [&os](const auto& a) { return a.first == &os; } ) - oss.begin();
+          if (index < oss.size())
+          {
+            std::swap(oss[index], oss.back());
+            oss.pop_back();
+            // std::ios is not movable, not swappable, so this is the workaround:
+            initial_states[index].copyfmt(initial_states.back());
+            initial_states.pop_back();
+          }
+        }
+
+        void add_callback(stream_callback_t callback, void* data)
+        {
+          const std::lock_guard<neam::spinlock> _u(lock);
+          callbacks.push_back({callback, data});
+        }
+
+        void remove_callback(stream_callback_t callback, void* data)
+        {
+          const std::lock_guard<neam::spinlock> _u(lock);
+          callbacks.erase(std::find(callbacks.begin(), callbacks.end(), std::pair<stream_callback_t, void*>{callback, data}));
         }
 
         typedef std::ostream &(*func_3)(std::ostream &);
@@ -100,9 +130,11 @@ namespace neam
         multiplexed_stream &operator << (func_3 type)
         {
           for (auto &it : oss)
-            it.first << (type);
+            (*it.first) << (type);
           if (type == static_cast<func_3>(std::endl))
           {
+            for (auto& it : callbacks)
+              it.first(it.second);
             lock.unlock();
           }
           return *this;
@@ -115,7 +147,9 @@ namespace neam
           if constexpr (std::is_same_v<type_t, _end>)
           {
             for (auto &it : oss)
-              it.first << std::endl;
+              (*it.first) << std::endl;
+            for (auto& it : callbacks)
+              it.first(it.second);
             lock.unlock();
             return *this;
           }
@@ -124,8 +158,8 @@ namespace neam
             lock.lock();
             os_header = std::ostringstream{};
             header_ended = false;
-            for (unsigned i = 0; i < initialStates.size(); ++i)
-              oss[i].first.copyfmt(initialStates[i]);
+            for (unsigned i = 0; i < initial_states.size(); ++i)
+              oss[i].first->copyfmt(initial_states[i]);
           }
           else if constexpr(std::is_same_v<type_t, internal::_end_header>)
           {
@@ -134,12 +168,15 @@ namespace neam
           else if constexpr(std::is_same_v<type_t, _newline>)
           {
             header_ended = true;
-            *this << "\n" << os_header.str();
+            *this << "\n";
+            for (auto& it : callbacks)
+              it.first(it.second);
+            *this << os_header.str();
           }
           else
           {
             for (auto &it : oss)
-              it.first << std::forward<T>(type);
+              (*it.first) << std::forward<T>(type);
             if (!header_ended)
               os_header << std::forward<T>(type);
           }
@@ -147,8 +184,9 @@ namespace neam
         }
 
       protected:
-        std::vector<std::pair<std::ostream &, bool>> oss;
-        std::deque<std::ios> initialStates;
+        std::vector<std::pair<std::ostream *, bool>> oss;
+        std::deque<std::ios> initial_states;
+        std::vector<std::pair<stream_callback_t, void*>> callbacks;
         neam::spinlock lock;
         std::ostringstream os_header;
         bool header_ended = false;

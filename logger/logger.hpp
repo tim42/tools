@@ -61,6 +61,11 @@ namespace neam
         /// \brief Adds a new output stream to the logger
         void add_stream(std::ostream &stream, bool do_delete = false);
 
+        /// \brief Adds a new output stream to the logger
+        void remove_stream(std::ostream &stream);
+
+        multiplexed_stream& get_multiplexed_stream() { return streams; }
+
         /// \brief print a debug level message
         multiplexed_stream &debug(const std::experimental::source_location& sloc = std::experimental::source_location::current());
         /// \brief print a log level message
