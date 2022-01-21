@@ -81,3 +81,21 @@ namespace std
     }
   };
 }
+
+#if __has_include(<fmt/format.h>)
+#include <fmt/format.h>
+template <> struct fmt::formatter<neam::id_t>
+{
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(neam::id_t id, FormatContext& ctx)
+  {
+    if (id == neam::id_t::invalid)
+      return format_to(ctx.out(), "[id:invalid]");
+    if (id == neam::id_t::none)
+      return format_to(ctx.out(), "[id:none]");
+    return format_to(ctx.out(), "[id:0x{:X}]", std::to_underlying(id));
+  }
+};
+#endif

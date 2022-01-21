@@ -83,7 +83,7 @@ namespace neam::io
     {
       if (!is_file_mapped(fid))
       {
-        check::debug::n_check(is_file_mapped(fid), "Failed to open {:X}: file not mapped", fid);
+        check::debug::n_check(is_file_mapped(fid), "Failed to open {}: file not mapped", fid);
         return 0;
       }
 
@@ -279,7 +279,7 @@ namespace neam::io
     {
       if (!is_file_mapped(fid))
       {
-        check::debug::n_check(is_file_mapped(fid), "Failed to open {:X}: file not mapped", fid);
+        check::debug::n_check(is_file_mapped(fid), "Failed to open {}: file not mapped", fid);
         return -1;
       }
       fd = check::unx::n_check_code(open(get_c_filename(fid), flags, 0644), "Failed to open {}", get_filename(fid));

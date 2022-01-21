@@ -83,7 +83,7 @@ namespace neam::threading
     }
     else
     {
-      cr::out().warn("threading::dependency-graph: Skipping add_dependency call as either {:X} or {:X} are not valid group names", group, dependency);
+      cr::out().warn("threading::dependency-graph: Skipping add_dependency call as either {} or {} are not valid group names", group, dependency);
     }
   }
 
@@ -317,7 +317,7 @@ namespace neam::threading
     cr::out().debug("----resolved graph debug----");
     cr::out().debug(" groups:");
     for (const auto& it : groups)
-      cr::out().debug("  group {}: {:X}", it.second, it.first);
+      cr::out().debug("  group {}: {}", it.second, it.first);
     cr::out().debug(" chain counts: {}", chain_count);
     cr::out().debug(" opcodes:");
     unsigned entry = 0;
