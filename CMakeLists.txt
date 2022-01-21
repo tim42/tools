@@ -10,6 +10,9 @@ project(ntools VERSION 0.2.0)
 add_library(ntools
     logger/logger.cpp
     io/context.cpp
+    threading/task.cpp
+    threading/task_group_graph.cpp
+    threading/task_manager.cpp
     test.cpp
 )
 
