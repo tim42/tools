@@ -189,4 +189,11 @@ namespace neam::cr
   };
 
   extern logger out;
+
+
+  /// \brief Neat callback for cr::logger that prints the output to the console
+  void print_log_to_console(void*, neam::cr::logger::severity s, const std::string& msg, std::source_location loc);
+
+  /// \brief Uses the same format as print_log_to_console but returns a string instead
+  std::string format_log_to_string(neam::cr::logger::severity s, const std::string& msg, std::source_location loc);
 }
