@@ -45,13 +45,13 @@ namespace neam
         struct vk_error_entry
         {
           VkResult code;
-          std::string code_name;
-          std::string description;
+          const char* code_name;
+          const char* description;
         };
 
         // thanks to https://www.khronos.org/registry/vulkan/specs/1.0-wsi_extensions/xhtml/vkspec.html#fundamentals-returncodes
 #define TP_MK_ENTRY(code, descr)  {code, #code, descr}
-        vk_error_entry vk_error_table[] =
+        static vk_error_entry vk_error_table[] =
         {
           TP_MK_ENTRY(VK_SUCCESS, "Command successfully completed"),
           TP_MK_ENTRY(VK_NOT_READY, "A fence or query has not yet completed"),
@@ -82,9 +82,10 @@ namespace neam
       }
 
       // errors from the vulkan API
-      template<typename T>
       struct vulkan_errors
       {
+        using error_type = VkResult;
+
         static bool is_error(VkResult code)
         {
           if ((int)code >= 0)
@@ -104,7 +105,7 @@ namespace neam
           return is_error(code);
         }
 
-        static std::string get_code_name(VkResult code)
+        static const char* get_code_name(VkResult code)
         {
           for (const auto &it : internal::vk_error_table)
           {
@@ -114,7 +115,7 @@ namespace neam
           return "unknow error";
         }
 
-        static std::string get_description(VkResult code)
+        static const char* get_description(VkResult code)
         {
           for (const auto &it : internal::vk_error_table)
           {
@@ -122,11 +123,6 @@ namespace neam
               return it.description;
           }
           return "unknow error";
-        }
-
-        static std::string generate_exception_message(VkResult code, const std::string &message) noexcept
-        {
-          return get_code_name(code) + ": " + message;
         }
       };
     } // namespace errors

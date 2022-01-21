@@ -46,39 +46,49 @@ namespace neam
     /// of elements allocated remain almost always the same
     ///
     /// \note the memory is held until someone call \e clear() or until the pool is destructed.
-    template<typename ObjectType, size_t ObjectCount = 420>
+    template<typename ObjectType, size_t ObjectCount = 1024>
     class memory_pool
     {
       private: // helpers
       private: // types
         struct chunk;
 
-        // free memory :)
-        struct allocation_slot
+        // free memory
+        struct alignas(8) allocation_slot
         {
-          union// just to get the size.
+          union
           {
             allocation_slot *next;
             ObjectType obj;
           };
-          uint8_t free;
+          uint64_t chunk_data;
 
           // get allocation_slot for pointer
           static allocation_slot *get_slot(void *ptr)
           {
             return reinterpret_cast<allocation_slot *>(reinterpret_cast<size_t>(ptr));
           }
+
+          bool is_free() const { return (chunk_data & 1) == 0; }
+          chunk* get_chunk() const { return reinterpret_cast<chunk*>(chunk_data & ~1); }
+
+          void set_free(bool free) { chunk_data = (chunk_data & ~1) | (free ? 0 : 1); }
+          void set_chunk(chunk* chk) { chunk_data |= reinterpret_cast<uint64_t>(chk) & ~1; }
         };
+
+        static_assert(alignof(allocation_slot) == 8, "Invalid object type: requested alignment greater than 8");
 
         struct chunk
         {
           uint32_t object_count = 0;
-          uint32_t max_object_count = 0;
+          uint32_t direct_alloc_offset = 0;
           chunk *next = nullptr;
           chunk *prev = nullptr;
 
-          allocation_slot data[0]; // clang doesn't likes the '[]' array... :/
+          allocation_slot data[0]; // clang doesn't likes the '[]' array.
         };
+
+        static constexpr size_t k_allocation_size = sizeof(chunk) + ObjectCount * sizeof(allocation_slot);
 
       public:
         memory_pool()
@@ -127,13 +137,13 @@ namespace neam
           for (chunk *chk = first_chunk; chk != nullptr;)
           {
             // for each slots, call the destructor if needed
-            for (size_t i = 0; i < chk->max_object_count; ++i)
+            for (size_t i = 0; i < ObjectCount && chk->object_count > 0; ++i)
             {
-              if (!chk->data[i].free)
+              if (!chk->data[i].is_free())
                 chk->data[i].obj.~ObjectType();
             }
             chunk *next = chk->next;
-            std::return_temporary_buffer(reinterpret_cast<uint8_t *>(chk));
+            operator delete ((void*)chk);
             chk = next;
           }
 
@@ -141,6 +151,34 @@ namespace neam
           chunk_count = 0;
           first_chunk = nullptr;
           first_free = nullptr;
+        }
+
+        void fast_clear(size_t chunk_to_remove = 1)
+        {
+          // destroy remaining objects (can be slow)
+          if (object_count > 0)
+          {
+            for (chunk* chk = first_chunk; chk != nullptr; chk = chk->next)
+            {
+              if (chk->object_count == 0)
+                continue;
+              // for each slots, call the destructor if needed
+              for (size_t i = 0; i < ObjectCount; ++i)
+              {
+                if (!chk->data[i].is_free())
+                  chk->data[i].obj.~ObjectType();
+              }
+            }
+          }
+
+          // reset the state:
+          object_count = 0;
+          for (chunk* chk = first_chunk; chk != nullptr; chk = chk->next)
+          {
+            chk->object_count = 0;
+            chk->direct_alloc_offset = 0;
+            memset(chk->data, 0, ObjectCount * sizeof(allocation_slot));
+          }
         }
 
         // construct an allocated object
@@ -159,52 +197,46 @@ namespace neam
         // allocate an object (do not call the constructor)
         ObjectType *allocate()
         {
-          if (!first_free) // allocate a new chunk
+          if (!first_chunk)
           {
-            auto alloc_info = std::get_temporary_buffer<uint8_t>(sizeof(chunk) + ObjectCount * sizeof(allocation_slot));
-
-            chunk *chk = reinterpret_cast<chunk *>(alloc_info.first);
-
-            if (!chk || alloc_info.second == 0)
+            if (!alloc_chunk())
               return nullptr;
-
-            chk->max_object_count = (alloc_info.second - sizeof(chunk)) / sizeof(allocation_slot);
-            chk->next = first_chunk;
-            chk->prev = nullptr;
-
-            if (!chk->max_object_count) // no more memory... :/
-            {
-              std::return_temporary_buffer(reinterpret_cast<uint8_t *>(chk));
-              return nullptr;
-            }
-
-            // init the chunk data (SLOW)
-            for (size_t i = 0; i < chk->max_object_count; ++i)
-            {
-              chk->data[i].free = 1;
-              if (i + 1 < chk->max_object_count)
-                chk->data[i].next = chk->data + i + 1;
-              else
-                chk->data[i].next = first_free;
-            }
-
-            // push free slots
-            first_free = chk->data;
-            first_chunk = chk;
-            ++chunk_count;
           }
 
-          allocation_slot *slot = first_free;
-          first_free = slot->next;
+          allocation_slot *slot = nullptr;
 
-          slot->free = 0;
+          // first: try to re-use previous allocation in the free list
+          if (first_free)
+          {
+            allocation_slot *slot = first_free;
+            first_free = slot->next;
+          }
+          else // try to grab something in the first chunk
+          {
+            if (first_chunk->direct_alloc_offset == ObjectCount)
+            {
+              if (!alloc_chunk())
+                return nullptr;
+            }
+            if (first_chunk->direct_alloc_offset < ObjectCount)
+            {
+              slot = &first_chunk->data[first_chunk->direct_alloc_offset];
+              first_chunk->direct_alloc_offset++;
+
+              // setup the slot for first usage:
+              slot->set_chunk(first_chunk);
+            }
+          }
+
+
+          slot->set_free(false);
+          ++(slot->get_chunk()->object_count);
           ++object_count;
           return &slot->obj;
         }
 
         // deallocate an object
         // the object **MUST** be allocated by the pool (or nullptr)
-        // (else you'll seg. ATTENTION: NO CHECK ARE PERFORMED.)
         void deallocate(ObjectType *p)
         {
           if (p)
@@ -212,42 +244,12 @@ namespace neam
             // get slot and chunk
             allocation_slot *slot = allocation_slot::get_slot(p);
 
+            slot->set_free(true);
+            --slot->get_chunk()->object_count;
+            --object_count;
 
-//          // ATTENTION: commented out because:
-//          //            - this would lead to an extra memory consumption (every slot needs to store its offset from the start of the chunk)
-//          //            - this would be extremely slow as when the chunk will be removed, you need to go through all the list of free
-//          //              allocation_slot to remove the ones that belongs to the removed chunk
-//          //              NOTE: (this could be avoided by storing a per chunk list of free slots and having a list of chunks with non-empty free slots list...)
-//          //                    (and this wouldn't have a so big impact on the perfs (there would be no loops, if you store a prev and a next pointer per chunk for the free list ;) ))
-//          //                    (maybe one day when I will have the time...)
-//
-//
-//             if (!(--chk->object_count)) // free the chunk, do not push slot into free slots
-//             {
-//               if (chk->prev)
-//                 chk->prev->next = chk->next;
-//               if (chk->next)
-//                 chk->next->prev = chk->prev;
-//               if (chk == first_chunk)
-//                 first_chunk = chk->next;
-// 
-//               if (!first_chunk)
-//                 first_free = nullptr;
-//               else
-//               {
-//                 // remove every free slots from the list... :(
-//               }
-// 
-//               std::return_temporary_buffer(reinterpret_cast<uint8_t *>(chk));
-//               --chunk_count;
-//               return;
-//             }
-
-            // chunk has some slots lefts, push the slot into the free slots.
-            slot->free = 1;
             slot->next = first_free;
             first_free = slot;
-            --object_count;
           }
         }
 
@@ -260,6 +262,25 @@ namespace neam
         size_t get_number_of_object() const
         {
           return object_count;
+        }
+
+      private:
+        bool alloc_chunk()
+        {
+          chunk* chk = reinterpret_cast<chunk*>(operator new (k_allocation_size));
+
+          if (!chk)
+            return false;
+
+          // setup the chunk
+          memset(chk, 0, k_allocation_size);
+          chk->next = first_chunk;
+          chk->prev = nullptr;
+
+          // push free slots
+          first_chunk = chk;
+          ++chunk_count;
+          return true;
         }
 
       private:

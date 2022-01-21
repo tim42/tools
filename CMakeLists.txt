@@ -2,106 +2,64 @@
 ## CMAKE file for neam/...
 ##
 
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.11)
+
+project(ntools VERSION 0.2.0)
 
 
-set(PROJ_VERSION_MAJOR 0)
-set(PROJ_VERSION_MINOR 1)
-set(PROJ_VERSION_SUPERMINOR 1)
+add_library(ntools
+    logger/logger.cpp
+    test.cpp
 
-if (CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
-  add_definitions(-D_PROJ_VERSION_MAJOR=${PROJ_VERSION_MAJOR})
-  add_definitions(-D_PROJ_VERSION_MINOR=${PROJ_VERSION_MINOR})
-  add_definitions(-D_PROJ_VERSION_SUPERMINOR=${PROJ_VERSION_SUPERMINOR})
+    debug/cl_errors.hpp
+    debug/unix_errors.hpp
+    debug/vk_errors.hpp
+    debug/assert.hpp
+    hash/fnv1a.hpp
+    logger/logger.hpp
+    ct_string.hpp
+    tpl_float.hpp
+    demangle.hpp
+    endianness.hpp
+    compiler_detection.hpp
+    function.hpp
+    integer_tools.hpp
+    float_utils.hpp
+    pair.hpp
+    allocation_transaction.hpp
+    memory_pool.hpp
+    ct_array.hpp
+    type_id.hpp
+    bit_cast.hpp
+    spinlock.hpp
+    embed.hpp
+    ct_list.hpp
+    ref.hpp
+    memory_allocator.hpp
+    macro.hpp
+    constructor_call.hpp
+    rng.hpp
+    chrono.hpp
+    backtrace.hpp
+    scoped_flag.hpp
+)
+
+# Workaround kdevelop refusing the C++23 standard if set in cmake...
+
+# this is the proper way, but kdevelop does not like it
+#set_property(TARGET ntools PROPERTY CXX_STANDARD 23)
+
+
+if(MSVC)
+  target_compile_options(ntools PRIVATE /W4 /WX /std:c++latest)
+else()
+  # It has to be 2b or kdevelop refuses to parse .cpp files
+  target_compile_options(ntools PRIVATE -Wall -Wextra -std=gnu++2b)
 endif()
 
-set(PROJ_VERSION_NAME "")
-
-set(PROJ_NAME ntools)
-
-if (PROJ_VERSION_NAME STREQUAL "")
-  set(PROJ_APP ${PROJ_NAME}-${PROJ_VERSION_MAJOR}.${PROJ_VERSION_MINOR}.${PROJ_VERSION_SUPERMINOR})
-else ()
-  set(PROJ_APP ${PROJ_NAME}-${PROJ_VERSION_NAME}-${PROJ_VERSION_MAJOR}.${PROJ_VERSION_MINOR}.${PROJ_VERSION_SUPERMINOR})
+if (TARGET fmt)
+    target_link_libraries(ntools fmt)
 endif()
 
-project(${PROJ_APP})
 
-message(STATUS "-----------------------------------------------")
-message(STATUS "Building neam/${PROJ_NAME} :: ${PROJ_APP}")
-message(STATUS "-----------------------------------------------")
-
-
-if (CMAKE_BUILD_TYPE STREQUAL "")
-  # CMake defaults to leaving CMAKE_BUILD_TYPE empty. This screws up
-  # differentiation between debug and release builds.
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: None (CMAKE_CXX_FLAGS or CMAKE_C_FLAGS used) Debug Release MinSizeRel." FORCE)
-endif ()
-
-# output
-set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/")
-set(EXECUTABLE_OUTPUT_PATH "${CMAKE_CURRENT_BINARY_DIR}/")
-set(LIBRARY_OUTPUT_PATH "${CMAKE_CURRENT_BINARY_DIR}/libs")
-
-# flags
-# general flags
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -O0 -g")
-else(CMAKE_BUILD_TYPE STREQUAL "Release")
-#else(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-#  set(PROJ_FLAGS "${PROJ_FLAGS} -DNDEBUG -fmerge-all-constants")
-endif()
-
-# some gcc/clang flags
-if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -std=gnu++2a -Wall -Wextra -Wno-unused-function")
-
-  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-#    set(PROJ_FLAGS "${PROJ_FLAGS} -finline-limit=0")
-  else(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(PROJ_FLAGS "${PROJ_FLAGS} -O3")
-#  else(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-#    set(PROJ_FLAGS "${PROJ_FLAGS} -Os")
-  endif()
-
-elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
-  set(PROJ_FLAGS "${PROJ_FLAGS} -std=gnu++2a -Wall -Wextra -Wno-unused-function")
-
-  if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(PROJ_FLAGS "${PROJ_FLAGS}")
-  else(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(PROJ_FLAGS "${PROJ_FLAGS} -O3")
-#  else(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-#    set(PROJ_FLAGS "${PROJ_FLAGS} -Oz")
-  endif()
-endif()
-
-# build a static lib
-if (NOT TARGET ${PROJ_APP})
-  add_definitions(${PROJ_FLAGS})
-  message(STATUS ${PROJ_FLAGS})
-
-  set(PROJ_SOURCES  logger/logger.cpp
-                    test.cpp
-  )
-  add_library(${PROJ_APP} STATIC ${PROJ_SOURCES})
-
-  # install
-  install(TARGETS ${PROJ_APP} DESTINATION lib/neam)
-  install(DIRECTORY ./ DESTINATION include/neam/tools
-          FILES_MATCHING PATTERN "*.hpp"
-          PATTERN ".git" EXCLUDE
-          PATTERN "cmake" EXCLUDE
-          PATTERN "samples" EXCLUDE)
-
-  if (${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME})
-    add_executable(${PROJ_APP}_test test_exec.cpp)
-    target_link_libraries(${PROJ_APP}_test ${PROJ_APP})
-  endif()
-endif()
-
-# export project name to parent project
-if (NOT ${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME})
-  set(lib${PROJ_NAME} ${PROJ_APP} PARENT_SCOPE)
-endif()
-
+target_include_directories(ntools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)

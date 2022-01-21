@@ -60,7 +60,7 @@ namespace neam
         memory_allocator(void *area, size_t size, memory_allocator *fallback, bool unstack_fallbacks = true)
 
         {
-          if (unstack_fallbacks)
+          if (unstack_fallbacks && fallback)
           {
             while (fallback->fallback_allocator)
               fallback = fallback->fallback_allocator;

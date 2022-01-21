@@ -47,24 +47,31 @@ namespace neam
       {
         using fnv_return_types = type_list<uint32_t, uint64_t>;
 
-        using fnv_offset_basis = type_list<embed<0x811c9dc5u>, embed<0xcbf29ce484222325u>>;
-        using fnv_prime = type_list<embed<0x01000193u>, embed<0x100000001b3u>>;
+        template<typename T> static constexpr T fnv_offset_basis = T();
+        template<> constexpr uint64_t fnv_offset_basis<uint64_t> = 0xcbf29ce484222325ul;
+        template<> constexpr uint32_t fnv_offset_basis<uint32_t> = 0x811c9dc5u;
+
+        template<typename T> static constexpr T fnv_prime = T();
+        template<> constexpr uint64_t fnv_prime<uint64_t> = 0x100000001b3ul;
+        template<> constexpr uint32_t fnv_prime<uint32_t> = 0x01000193u;
       } // namespace internal
 
       template<size_t BitCount, typename T>
       static constexpr auto fnv1a(const T *const data, size_t len) -> auto
       {
-        static_assert(sizeof(T) == 1, "We only support 1-byte types for FNV1A");
         static_assert(BitCount == 32 || BitCount == 64, "We only support 32 and 64bit FNV-1a hash function");
 
         constexpr size_t index = BitCount / 32 - 1;
-        static_assert(index <= 1, "We only support 32 and 64bit FNV-1a has function");
-
         using type = list::get_type<internal::fnv_return_types, index>;
 
-        type hash = list::get_type<internal::fnv_offset_basis, index>::get();
+        static_assert(sizeof(T) == 1, "Input type must be 8bit");
+
+        static_assert(internal::fnv_offset_basis<type> != 0, "Invalid offset basis (are you using a supported type ?)");
+        static_assert(internal::fnv_prime<type> != 0, "Invalid prime (are you using a supported type ?)");
+
+        type hash = internal::fnv_offset_basis<type>;
         for (size_t i = 0; i < len; ++i)
-          hash = (data[i] ^ hash) * static_cast<type>(list::get_type<internal::fnv_prime, index>::get());
+          hash = ((uint8_t)(data)[i] ^ hash) * internal::fnv_prime<type>;
         return hash;
       }
 
@@ -74,14 +81,33 @@ namespace neam
         static_assert(BitCount == 32 || BitCount == 64, "We only support 32 and 64bit FNV-1a hash function");
 
         constexpr size_t index = BitCount / 32 - 1;
-        static_assert(index <= 1, "We only support 32 and 64bit FNV-1a has function");
-
         using type = list::get_type<internal::fnv_return_types, index>;
 
-        type hash = list::get_type<internal::fnv_offset_basis, index>::get();
+        static_assert(internal::fnv_offset_basis<type> != 0, "Invalid offset basis (are you using a supported type ?)");
+        static_assert(internal::fnv_prime<type> != 0, "Invalid prime (are you using a supported type ?)");
+
+
+        type hash = internal::fnv_offset_basis<type>;
         // StrLen - 1 is to skip the ending \0
         for (size_t i = 0; i < StrLen - 1; ++i)
-          hash = (str[i] ^ hash) * static_cast<type>(list::get_type<internal::fnv_prime, index>::get());
+          hash = ((uint8_t)(str[i]) ^ hash) * internal::fnv_prime<type>;
+        return hash;
+      }
+
+      template<size_t BitCount, size_t StrLen>
+      static constexpr auto fnv1a_continue(list::get_type<internal::fnv_return_types, BitCount / 32 - 1> initial,
+                                           const char (&str)[StrLen]) -> auto
+      {
+        static_assert(BitCount == 32 || BitCount == 64, "We only support 32 and 64bit FNV-1a hash function");
+
+        using type = list::get_type<internal::fnv_return_types, BitCount / 32 - 1>;
+
+        static_assert(internal::fnv_prime<type> != 0, "Invalid prime (are you using a supported type ?)");
+
+        type hash = initial;
+        // StrLen - 1 is to skip the ending \0
+        for (size_t i = 0; i < StrLen - 1; ++i)
+          hash = ((uint8_t)(str[i]) ^ hash) * internal::fnv_prime<type>;
         return hash;
       }
     } // namespace hash

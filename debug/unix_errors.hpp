@@ -43,9 +43,10 @@ namespace neam
     namespace errors
     {
       // errno / return codes (direct linux syscall return: -errno)
-      template<typename T>
       struct unix_errors
       {
+        using error_type = int;
+
         static bool is_error(long code)
         {
           return code < 0;
@@ -56,19 +57,18 @@ namespace neam
           return code <= 0;
         }
 
-        static std::string get_code_name(long code)
+        static const char* get_code_name(long code)
         {
-          std::ostringstream os;
           if (code == -1)
-            os << "errno: " << errno;
+            return "error";
           else if (code < -1)
-            os << "code: " << -code;
+            return "error/code";
           else if (!code)
-            os << "success";
-          return os.str();
+            return "success";
+          return "success?";
         }
 
-        static std::string get_description(long code)
+        static const char* get_description(long code)
         {
           if (code == -1)
             return strerror(errno);

@@ -1,12 +1,9 @@
 //
-// file : logger.hpp
-// in : file:///home/tim/projects/reflective/reflective/logger.hpp
-//
-// created by : Timothée Feuillet on linux.site
-// date: 17/01/2015 22:51:32
+// created by : Timothée Feuillet
+// date: 2021-11-24
 //
 //
-// Copyright (c) 2014-2016 Timothée Feuillet
+// Copyright (c) 2021 Timothée Feuillet
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,91 +24,169 @@
 // SOFTWARE.
 //
 
-#ifndef __N_1571082496879360556_301943581__LOGGER_HPP__
-# define __N_1571082496879360556_301943581__LOGGER_HPP__
+#pragma once
 
-#include <experimental/source_location>
+#if __has_include(<fmt/format.h>)
+  #define N_LOGGER_USE_FMT 1
+  #define N_LOGGER_CRIPPLED 0
+  #include <fmt/format.h>
+#elif __has_include(<format>)
+  #define N_LOGGER_USE_FMT 0
+  #define N_LOGGER_CRIPPLED 0
+  #include <format>
+#else
+  #define N_LOGGER_USE_FMT 0
+  #define N_LOGGER_CRIPPLED 1
+  #warning "Please update the compiler or add fmt, neam::cr::logger is crippled"
+#endif
 
-#include <string_view>
-#include <list>
-#include <fstream>
-#include <stdexcept>
-#include <chrono>
-#include <iomanip>
+
 #include <vector>
-#include "../spinlock.hpp"
+#include <source_location>
+#include <string>
 
-#include "multiplexed_stream.hpp"
 
-namespace neam
+#ifndef N_LOGGER_STRIP_DEBUG
+  #define N_LOGGER_STRIP_DEBUG 0
+#endif
+
+
+namespace neam::cr
 {
-  namespace cr
+  class logger
   {
-    /// \brief a non-singletoned stream_logger
-    class stream_logger
-    {
-      public:
-        /// \brief create the stream_logger
-        /// \param[in] _file the output log file
-        /// \param[in] _name the name of the stream (will appear on each printed line)
-        stream_logger(const std::string& _file, std::string_view _name);
-        stream_logger(std::initializer_list<std::pair<std::ostream &, bool>> _oss, const std::string_view _name);
-        ~stream_logger();
+    public:
+      enum class severity
+      {
+        debug,
+        message,
+        warning,
+        error,
+        critical,
+      };
 
-        /// \brief Adds a new output stream to the logger
-        void add_stream(std::ostream &stream, bool do_delete = false);
+      severity min_severity = severity::debug;
 
-        /// \brief Adds a new output stream to the logger
-        void remove_stream(std::ostream &stream);
+      bool can_log(severity s) const
+      {
+        return (int)s >= (int)min_severity;
+      }
 
-        multiplexed_stream& get_multiplexed_stream() { return streams; }
-
-        /// \brief print a debug level message
-        multiplexed_stream &debug(const std::experimental::source_location& sloc = std::experimental::source_location::current());
-        /// \brief print a log level message
-        multiplexed_stream &info(const std::experimental::source_location& sloc = std::experimental::source_location::current());
-        /// \brief print a log level message
-        multiplexed_stream &log(const std::experimental::source_location& sloc = std::experimental::source_location::current());
-        /// \brief print a warning level message
-        multiplexed_stream &warning(const std::experimental::source_location& sloc = std::experimental::source_location::current());
-        /// \brief print an error level message
-        multiplexed_stream &error(const std::experimental::source_location& sloc = std::experimental::source_location::current());
-        /// \brief print a critical level message
-        multiplexed_stream &critical(const std::experimental::source_location& sloc = std::experimental::source_location::current());
-
-        enum class verbosity_level : uint32_t
+      static const char* severity_to_str(severity s)
+      {
+        switch (s)
         {
-          debug = 0,
-          info = 1,
-          log = 1,
-          warning = 2,
-          error = 3,
-          critical = 4,
-        };
+          case severity::debug: return "debug";
+          case severity::message: return "message";
+          case severity::warning: return "warning";
+          case severity::error: return "error";
+          case severity::critical: return "critical";
+        }
+        return "unknown";
+      }
+      static const char* severity_abbr(severity s)
+      {
+        switch (s)
+        {
+          case severity::debug: return "DBG";
+          case severity::message: return "MSG";
+          case severity::warning: return "WRN";
+          case severity::error: return "ERR";
+          case severity::critical: return "CRIT";
+        }
+        return "UKN";
+      }
 
-        /// \brief holds the minimal level allowed for logging
-        verbosity_level log_level = verbosity_level::debug;
+      void log_str(severity s, const std::string& str, std::source_location loc = std::source_location::current());
 
-        bool no_header = false;
+#if N_LOGGER_USE_FMT
+      template<typename... Args> using format_string = fmt::format_string<Args...>;
+#else
+      template<typename... Args> using format_string = const char*;
+#endif
 
-      protected:
-        double get_time() const;
+#if N_LOGGER_USE_FMT
+      template<typename... Args>
+      void log_fmt(severity s, std::source_location loc, format_string<Args...> str, Args&&... args)
+      {
+        log_str(s, fmt::format(std::move(str), std::forward<Args>(args)...), loc);
+      }
+#elif !N_LOGGER_CRIPPLED
+      template<typename... Args>
+      void log_fmt(severity s, std::source_location loc, format_string<Args...> str, Args&&... args)
+      {
+        log_str(s, std::format(str, std::forward<Args>(args)...), loc);
+      }
+#else
+      template<typename... Args>
+      void log_fmt(severity s, std::source_location loc, format_string<Args...> str, Args&&... args)
+      {
+        log_str(s, str, loc);
+      }
+#endif
 
-        static multiplexed_stream &get_log_header(stream_logger &logger, const char *level, const std::experimental::source_location& sloc);
+      struct log_location_helper
+      {
+        logger& output;
+        const std::source_location loc;
 
-      protected:
-        multiplexed_stream empty_stream; // holds nothing, "multiplex" no stream.
-        multiplexed_stream streams;
-        const std::string name;
-        const std::chrono::time_point<std::chrono::system_clock> launch_time;
-    };
+        template<typename... Args>
+        void log_fmt(severity s, format_string<Args...> str, Args&& ... args)
+        {
+          output.log_fmt(s, loc, str, std::forward<Args>(args)...);
+        }
 
-    /// \brief the "main" logger (out)
-    extern stream_logger out;
-  } // namespace cr
-} // namespace neam
+        // helpers:
+        template<typename... Args>
+        void debug(format_string<Args...> str, Args&& ... args)
+        {
+#if !N_LOGGER_STRIP_DEBUG
+          output.log_fmt<Args...>(severity::debug, loc, std::move(str), std::forward<Args>(args)...);
+#endif
+        }
+        template<typename... Args>
+        void log(format_string<Args...> str, Args&& ... args)
+        {
+          output.log_fmt<Args...>(severity::message, loc, std::move(str), std::forward<Args>(args)...);
+        }
+        template<typename... Args>
+        void warn(format_string<Args...> str, Args&& ... args)
+        {
+          output.log_fmt<Args...>(severity::warning, loc, std::move(str), std::forward<Args>(args)...);
+        }
+        template<typename... Args>
+        void error(format_string<Args...> str, Args&& ... args)
+        {
+          output.log_fmt<Args...>(severity::error, loc, std::move(str), std::forward<Args>(args)...);
+        }
 
-#endif /*__N_1571082496879360556_301943581__LOGGER_HPP__*/
+        template<typename... Args>
+        void critical(format_string<Args...> str, Args&& ... args)
+        {
+          output.log_fmt<Args...>(severity::critical, loc, std::move(str), std::forward<Args>(args)...);
+        }
+      };
 
-// kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
+      log_location_helper operator()(std::source_location loc = std::source_location::current())
+      {
+        return { *this, loc };
+      }
 
+      // callback handling:
+      // callbacks are called for each logged message that pass the min_severity filter
+      using callback_t = void(*)(void*, severity, const std::string&, std::source_location);
+
+      void register_callback(callback_t cb, void* data);
+      void unregister_callback(callback_t cb, void* data);
+
+    private:
+      struct callback_context
+      {
+        callback_t fnc;
+        void* data;
+      };
+      std::vector<callback_context> callbacks;
+  };
+
+  extern logger out;
+}

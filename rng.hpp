@@ -29,21 +29,15 @@
 
 #pragma once
 
-#include <cstdint>
 #include <type_traits>
 
 namespace neam::ct
 {
-  /// \brief Some kind of magic PRGN, absolutely lite-weight
-  /// (as long a integer (self-)multiplication is lite).
-  /// Its "entropy" for least significant bit is quite bad, and particularly below the 16th bit.
-  /// Because of that, you should consider shifting instead of and-ing in order to get a correct random-ish number
+  /// \brief Some kind of magic PRNG, absolutely lite-weight
   template<typename IntegerType>
-  static constexpr IntegerType invwk_rng(IntegerType seed)
+  static constexpr IntegerType invwk_rnd(IntegerType seed)
   {
     static_assert(std::is_unsigned_v<IntegerType>);
     return seed + ((seed * seed) | IntegerType(5));
   }
-
-  
 } // namespace neam::ct

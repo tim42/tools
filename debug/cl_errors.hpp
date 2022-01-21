@@ -45,9 +45,9 @@ namespace neam
         struct cl_error_entry
         {
           cl_int code;
-          std::string code_name;
-          std::string function;
-          std::string description;
+          const char* code_name;
+          const char* function;
+          const char* description;
         };
 
         // thx to http://streamcomputing.eu/blog/2013-04-28/opencl-1-2-error-codes/
@@ -121,9 +121,10 @@ namespace neam
 
       } // namespace internal
       // for opencl errors
-      template<typename T>
       struct cl_errors
       {
+        using error_type = cl_int;
+
         static bool is_error(long code)
         {
           if (code == CL_SUCCESS)
@@ -143,7 +144,7 @@ namespace neam
           return is_error(code);
         }
 
-        static std::string get_code_name(long code)
+        static const char* get_code_name(long code)
         {
           for (auto &it : internal::cl_error_table)
           {
@@ -153,7 +154,7 @@ namespace neam
           return "UNKNOW CODE";
         }
 
-        static std::string get_description(long code)
+        static const char* get_description(long code)
         {
           for (auto &it : internal::cl_error_table)
           {

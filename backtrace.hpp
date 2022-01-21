@@ -48,15 +48,12 @@ namespace neam
     /// \param[in] backtrace_size the depth of the backtrace: the number of entries to print
     /// \param[in] skip the number of entries to skip from printing. (the N first entries to skip).
     /// \note currently only on LINUX
-    static inline void print_callstack(size_t backtrace_size = 25, size_t skip = 1)
+    static inline void print_callstack(size_t /*backtrace_size*/ = 25, size_t /*skip*/ = 1)
     {
-#ifdef __linux__
-      static std::atomic<uint32_t> counter(0);
-
+#ifdef __linux__s
       char **strings;
       void *bt[backtrace_size];
 
-      ++counter;
       int num = backtrace(bt, backtrace_size);
       strings = backtrace_symbols(bt, num);
 

@@ -20,6 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
+#ifndef __CR_STRING_HPP__
+#define __CR_STRING_HPP__
+
 #include <initializer_list>
 #include <type_traits>
 #include <utility>
@@ -27,8 +30,6 @@
 #include <vector>
 #include <stdexcept>
 
-#ifndef __CR_STRING_HPP__
-#define __CR_STRING_HPP__
 
 #define _SL_STRINGIZE(x) #x
 #define STRINGIZE(x) _SL_STRINGIZE(x)
@@ -40,6 +41,19 @@ namespace neam
 
   namespace ct
   {
+    /// \brief Allows string litterals in templates
+    template<size_t Count>
+    struct string_holder
+    {
+      consteval string_holder(const char (&_string)[Count])
+      {
+        std::copy_n(_string, Count, string);
+      }
+      consteval string_holder(const string_holder&) = default;
+
+      char string[Count];
+    };
+
     /// \brief C-String + Size from array
     struct string
     {

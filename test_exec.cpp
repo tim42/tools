@@ -9,12 +9,12 @@
 template<typename T>
 void print_type_info()
 {
-  neam::cr::out.log() << neam::ct::type_name<T>.str << "  #" << std::hex << neam::ct::type_hash<T> << '\n';
+  neam::cr::out().log("{} #{:X}", neam::ct::type_name<T>.str, neam::ct::type_hash<T>);
 }
 template<auto V>
 void print_val_info()
 {
-  neam::cr::out.log() << neam::ct::value_name<V>.str << "  #" << std::hex << neam::ct::value_hash<V> << '\n';
+  neam::cr::out().log("{} #{:X}", neam::ct::value_name<T>.str, neam::ct::value_hash<T>);
   print_type_info<decltype(V)>();
 }
 
