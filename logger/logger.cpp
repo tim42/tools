@@ -1,6 +1,13 @@
 
 #include "logger.hpp"
 
+#if __has_include(<fmt/format.h>)
+  #include <filesystem>
+  #include <fmt/format.h>
+  #include <fmt/color.h>
+  #include "../chrono.hpp"
+#endif
+
 namespace neam::cr
 {
   logger out;
@@ -30,7 +37,6 @@ namespace neam::cr
   }
 
 #if __has_include(<fmt/format.h>)
-#include "../chrono.hpp"
   std::string format_log_to_string(neam::cr::logger::severity s, const std::string& msg, std::source_location loc)
   {
     static neam::cr::chrono chr;
