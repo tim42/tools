@@ -82,6 +82,15 @@ namespace neam
   } // namespace debug
 } // namespace neam
 
+#include "assert.hpp"
+
+namespace neam::check
+{
+  // lovely that gcc defines a macro named `unix`...
+  using unx = neam::debug::on_error<neam::debug::errors::unix_errors>;
+}
+
+
 #endif /*__N_14838165221451961813_480336325__UNIX_ERRORS_HPP__*/
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 

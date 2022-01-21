@@ -41,7 +41,16 @@
 
 namespace neam::debug
 {
-  template<typename ErrorClass>
+  struct dummy_error
+  {
+    using error_type = int;
+
+    static bool is_error(int) { return false; }
+    static bool exists(int) { return false; }
+    static const char* get_code_name(int) { return "[dummy error: no code]"; }
+    static const char* get_description(int) { return "[dummy error: no description]"; }
+  };
+  template<typename ErrorClass = dummy_error>
   class on_error
   {
     public:
@@ -157,3 +166,7 @@ namespace neam::debug
 
 #endif
 
+namespace neam::check
+{
+  using debug = neam::debug::on_error<>;
+}

@@ -129,5 +129,13 @@ namespace neam
   } // namespace debug
 } // namespace neam
 
+#include "assert.hpp"
+
+namespace neam::check
+{
+  using on_vulkan_error = neam::debug::on_error<neam::debug::errors::vulkan_errors>;
+  using vulkan = on_vulkan_error;
+}
+
 #endif // __N_6139159572450221341_1885311108_VK_ERRORS_HPP__
 

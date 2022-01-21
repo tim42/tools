@@ -273,7 +273,7 @@ namespace neam
             return false;
 
           // setup the chunk
-          memset(chk, 0, k_allocation_size);
+          memset((void*)chk, 0, k_allocation_size);
           chk->next = first_chunk;
           chk->prev = nullptr;
 
