@@ -69,7 +69,7 @@ namespace neam::metadata::concepts
   /// {
   ///   unsigned some_member = 0;
   ///   std::vector< std::map< int, SomeOtherStruct > > stuff;
-  ///   io::raw_data binary_blob;
+  ///   raw_data binary_blob;
   /// };
   /// N_METADATA_STRUCT(MyAwesomeStruct)
   /// {

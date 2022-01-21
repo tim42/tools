@@ -9,39 +9,8 @@ project(ntools VERSION 0.2.0)
 
 add_library(ntools
     logger/logger.cpp
+    io/context.cpp
     test.cpp
-
-    debug/cl_errors.hpp
-    debug/unix_errors.hpp
-    debug/vk_errors.hpp
-    debug/assert.hpp
-    hash/fnv1a.hpp
-    logger/logger.hpp
-    ct_string.hpp
-    tpl_float.hpp
-    demangle.hpp
-    endianness.hpp
-    compiler_detection.hpp
-    function.hpp
-    integer_tools.hpp
-    float_utils.hpp
-    pair.hpp
-    allocation_transaction.hpp
-    memory_pool.hpp
-    ct_array.hpp
-    type_id.hpp
-    bit_cast.hpp
-    spinlock.hpp
-    embed.hpp
-    ct_list.hpp
-    ref.hpp
-    memory_allocator.hpp
-    macro.hpp
-    constructor_call.hpp
-    rng.hpp
-    chrono.hpp
-    backtrace.hpp
-    scoped_flag.hpp
 )
 
 # Workaround kdevelop refusing the C++23 standard if set in cmake...
