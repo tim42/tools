@@ -107,9 +107,16 @@ namespace neam::cr
         // allocate a new chunk as we don't have enough space:
         if (current_chunk->offset + count > ChunkSize)
         {
-          chunk_t* new_current = allocate_chunk();
-          current_chunk->next = new_current;
-          current_chunk = new_current;
+          if (current_chunk->next != nullptr)
+          {
+            current_chunk = current_chunk->next;
+          }
+          else
+          {
+            chunk_t* new_current = allocate_chunk();
+            current_chunk->next = new_current;
+            current_chunk = new_current;
+          }
         }
 
         uint32_t offset = current_chunk->offset;
@@ -152,8 +159,6 @@ namespace neam::cr
       }
 
       /// \brief Clear the state of the allocator, only free n chunks (will always keep the first chunk allocated
-      /// \warning NOT THREAD SAFE. This operation modify the state of the allocation pool in a way that will make any previously done
-      ///          allocation invalid. It is expected that the caller has an external way to prevent concurrency for this operation
       void fast_clear(size_t chunks_to_free = 2)
       {
         std::lock_guard<spinlock> _lg(lock);
@@ -178,6 +183,7 @@ namespace neam::cr
 
         // delete the extra chunks
         current = last->next;
+        last->next = nullptr;
         while (current != nullptr)
         {
           chunk_t* next = current->next;
