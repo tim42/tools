@@ -16,6 +16,7 @@ namespace neam::cr
   {
     if (!can_log(s))
       return;
+
     for (auto&& it : callbacks)
     {
       it.fnc(it.data, s, str, loc);
@@ -40,8 +41,8 @@ namespace neam::cr
   std::string format_log_to_string(neam::cr::logger::severity s, const std::string& msg, std::source_location loc)
   {
     static neam::cr::chrono chr;
-    std::string path = std::filesystem::proximate(loc.file_name(), std::filesystem::path(std::source_location::current().file_name()) / "../../..");
-    return fmt::format("[{:>12.6f}] [{:>4}] {:.<65}:{:>4}: {}", std::max(0.0, chr.now_relative()), neam::cr::logger::severity_abbr(s), path, loc.line(), msg);
+    std::string path = std::filesystem::proximate(loc.file_name(), std::filesystem::path(std::source_location::current().file_name()) / "../../../..");
+    return fmt::format("[{:>12.6f}] [{:>4}] {:.<55}:{:>4}: {}", std::max(0.0, chr.now_relative()), neam::cr::logger::severity_abbr(s), path, loc.line(), msg);
   }
 
   void print_log_to_console(void*, neam::cr::logger::severity s, const std::string& msg, std::source_location loc)

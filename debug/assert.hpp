@@ -26,9 +26,11 @@
 
 #pragma once
 
-#include "../logger/logger.hpp"
-
 #include <source_location>
+
+#include "../logger/logger.hpp"
+#include "../backtrace.hpp"
+#include "../scoped_flag.hpp"
 
 #ifndef N_ALLOW_DEBUG
   #define N_ALLOW_DEBUG false
@@ -62,14 +64,22 @@ namespace neam::debug
       template<typename... Args>
       static void _assert(std::source_location sloc, const bool test, const char* test_str, fmt::format_string<Args...> message, Args&&... args)
       {
-        [[likely]] if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
+        [[unlikely]] if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
         {
           cr::out.log_fmt(cr::logger::severity::debug, sloc, "[ASSERT PASSED: {0}]", test_str);
           return;
         }
         [[likely]] if (test)
           return;
-        cr::out.log_fmt(cr::logger::severity::critical, sloc, "[ASSERT FAILED: {0}]: {1}", test_str, fmt::format(std::move(message), std::forward<Args>(args)...));
+        {
+          cr::scoped_counter _sc(thread_waiting);
+
+          auto _sl = cr::out.acquire_lock();
+          cr::out.log_fmt(cr::logger::severity::critical, sloc, "[ASSERT FAILED: {0}]: {1}", test_str, fmt::format(std::move(message), std::forward<Args>(args)...));
+          cr::print_callstack(25, 1, true);
+        }
+
+        while (thread_waiting.load(std::memory_order_acquire) > 0) {}
 
         asm("int $3"); // break
         abort();       // abort, just in case
@@ -85,7 +95,13 @@ namespace neam::debug
         }
         [[likely]] if (test)
           return test;
-        cr::out.log_fmt(cr::logger::severity::error, sloc, "[CHECK  FAILED: {0}]: {1}", test_str, fmt::format(std::move(message), std::forward<Args>(args)...));
+        {
+          cr::scoped_counter _sc(thread_waiting);
+
+          auto _sl = cr::out.acquire_lock();
+          cr::out.log_fmt(cr::logger::severity::error, sloc, "[CHECK  FAILED: {0}]: {1}", test_str, fmt::format(std::move(message), std::forward<Args>(args)...));
+          cr::print_callstack(25, 1, true);
+        }
 
 //         asm("int $3"); // break
 
@@ -96,7 +112,7 @@ namespace neam::debug
       static error_type _assert_code(std::source_location sloc, const error_type code, const char* test_str, fmt::format_string<Args...> message, Args&&... args)
       {
         const bool test = !ErrorClass::is_error(code);
-        if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
+        [[unlikely]] if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
         {
           cr::out.log_fmt(cr::logger::severity::debug, sloc, "[ASSERT PASSED: {0} returned {1}: {2}]",
                           test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code));
@@ -104,10 +120,18 @@ namespace neam::debug
         }
         [[likely]] if (test)
           return code;
-        cr::out.log_fmt(cr::logger::severity::critical, sloc,
-                        "[ASSERT FAILED: {0} returned {1}: {2}]: {3}",
-                        test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code),
-                        fmt::format(std::move(message), std::forward<Args>(args)...));
+        {
+          cr::scoped_counter _sc(thread_waiting);
+
+          auto _sl = cr::out.acquire_lock();
+          cr::out.log_fmt(cr::logger::severity::critical, sloc,
+                          "[ASSERT FAILED: {0} returned {1}: {2}]: {3}",
+                          test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code),
+                          fmt::format(std::move(message), std::forward<Args>(args)...));
+          cr::print_callstack(25, 1, true);
+        }
+
+        while (thread_waiting.load(std::memory_order_acquire) > 0) {}
 
         asm("int $3"); // break
         abort();
@@ -118,7 +142,7 @@ namespace neam::debug
       static error_type _check_code(std::source_location sloc, const error_type code, const char* test_str, fmt::format_string<Args...> message, Args&&... args)
       {
         const bool test = !ErrorClass::is_error(code);
-        if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
+        [[unlikely]] if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
         {
           cr::out.log_fmt(cr::logger::severity::debug, sloc, "[CHECK  PASSED: {0} returned {1}: {2}]",
                           test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code));
@@ -126,11 +150,16 @@ namespace neam::debug
         }
         [[likely]] if (test)
           return code;
-        cr::out.log_fmt(cr::logger::severity::error, sloc,
-                        "[CHECK  FAILED: {0} returned {1}: {2}]: {3}",
-                        test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code),
-                        fmt::format(std::move(message), std::forward<Args>(args)...));
+        {
+          cr::scoped_counter _sc(thread_waiting);
 
+          auto _sl = cr::out.acquire_lock();
+          cr::out.log_fmt(cr::logger::severity::error, sloc,
+                          "[CHECK  FAILED: {0} returned {1}: {2}]: {3}",
+                          test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code),
+                          fmt::format(std::move(message), std::forward<Args>(args)...));
+          cr::print_callstack(25, 1, true);
+        }
 //         asm("int $3"); // break
         return code;
       }
@@ -140,7 +169,9 @@ namespace neam::debug
       static bool _dummy(bool r) { return r; }
       static error_type _dummy_code(error_type r) { return r; }
     private:
+      static std::atomic<uint32_t> thread_waiting;
   };
+  template<typename ErrorClass> std::atomic<uint32_t> on_error<ErrorClass>::thread_waiting = 0;
 }
 
 #if !N_DISABLE_CHECKS

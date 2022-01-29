@@ -48,21 +48,18 @@ namespace neam
     /// \param[in] backtrace_size the depth of the backtrace: the number of entries to print
     /// \param[in] skip the number of entries to skip from printing. (the N first entries to skip).
     /// \note currently only on LINUX
-    static inline void print_callstack(size_t /*backtrace_size*/ = 25, size_t /*skip*/ = 1)
+    static inline void print_callstack(size_t backtrace_size = 25, size_t skip = 1, bool has_logger_lock = false)
     {
-#ifdef __linux__s
+#ifdef __linux__
       char **strings;
-      void *bt[backtrace_size];
+      void *bt[backtrace_size + skip];
 
-      int num = backtrace(bt, backtrace_size);
+      int num = backtrace(bt, backtrace_size + skip);
       strings = backtrace_symbols(bt, num);
 
-      // acquire the logger lock
-      auto &stream = neam::cr::out.warning();
-      stream << "#############[  B A C K T R A C E  ]#############" << neam::cr::newline
-             << neam::cr::newline
-             << "[ most recent call first: ]" << neam::cr::newline
-             << neam::cr::newline;
+      auto logger = neam::cr::out(has_logger_lock);
+      logger.warn("#############[  B A C K T R A C E  ]#############"); 
+      logger.debug("## most recent call first:"); 
 
       for (int j = skip; j < num; ++j)
       {
@@ -76,27 +73,22 @@ namespace neam
 
         // demangle the symbol
         int status;
-        char *realname = abi::__cxa_demangle(mangled, 0, 0, &status);
+        char buffer[1024];
+        size_t len = 1024;
+        char *realname = abi::__cxa_demangle(mangled, buffer, &len, &status);
         if (status)
           realname = mangled;
-        else
-          free(mangled);
 
         // print
-        stream << "[" << num - j << "] ";
-
-        if (realname[0] != '\0')
-          stream << realname << neam::cr::newline << "    ";
-
-        stream << strings[j] << neam::cr::newline;
+        logger.warn("  [{}]: {}\t{}", num - j, realname, strings[j]);
 
         // and free
-        free(realname);
+        free(mangled);
       }
-      stream << neam::cr::newline
-             << "## addr2line -e " << program_invocation_name << " -fipsC ";
 
       // print the indexes
+      std::vector<char*> addr;
+      addr.reserve(num);
       for (int j = skip; j < num; ++j)
       {
         // extract the address from the string
@@ -107,13 +99,17 @@ namespace neam
         for (; strings[j][i + k] && strings[j][i + k] != ']'; ++k);
         char *fnc_addr = strndup(strings[j] + i, k);
 
-        stream << fnc_addr << " ";
-        free(fnc_addr);
+        addr.push_back(fnc_addr);
       }
 
-      stream << neam::cr::newline << neam::cr::newline
-             << "########[  B A C K T R A C E     E N D  ]########" << std::endl;
-      // release the lock.
+      logger.debug("## addr2line -e {} -fipsC {}", program_invocation_name, fmt::join(addr, " "));
+
+      for (auto it : addr)
+      {
+        free(it);
+      }
+
+      logger.warn("########[  B A C K T R A C E     E N D  ]########");
 
       free(strings);
 #endif

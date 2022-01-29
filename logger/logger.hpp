@@ -44,6 +44,7 @@
 #include <vector>
 #include <source_location>
 #include <string>
+#include "../spinlock.hpp"
 
 
 #ifndef N_LOGGER_STRIP_DEBUG
@@ -88,16 +89,19 @@ namespace neam::cr
       {
         switch (s)
         {
-          case severity::debug: return "DBG";
-          case severity::message: return "MSG";
-          case severity::warning: return "WRN";
+          case severity::debug: return "DEBG";
+          case severity::message: return "MESG";
+          case severity::warning: return "WARN";
           case severity::error: return "ERR";
           case severity::critical: return "CRIT";
         }
-        return "UKN";
+        return "????";
       }
 
       void log_str(severity s, const std::string& str, std::source_location loc = std::source_location::current());
+
+      std::lock_guard<spinlock> acquire_lock() { return std::lock_guard<spinlock>{lock}; }
+      void wait_for_lock() { lock._wait_for_lock(); }
 
 #if N_LOGGER_USE_FMT
       template<typename... Args> using format_string = fmt::format_string<Args...>;
@@ -129,10 +133,13 @@ namespace neam::cr
       {
         logger& output;
         const std::source_location loc;
+        bool skip_lock = false;
 
         template<typename... Args>
         void log_fmt(severity s, format_string<Args...> str, Args&& ... args)
         {
+          if (!skip_lock)
+            output.wait_for_lock();
           output.log_fmt(s, loc, str, std::forward<Args>(args)...);
         }
 
@@ -167,9 +174,9 @@ namespace neam::cr
         }
       };
 
-      log_location_helper operator()(std::source_location loc = std::source_location::current())
+      log_location_helper operator()(bool skip_lock = false, std::source_location loc = std::source_location::current())
       {
-        return { *this, loc };
+        return { *this, loc, skip_lock };
       }
 
       // callback handling:
@@ -186,6 +193,8 @@ namespace neam::cr
         void* data;
       };
       std::vector<callback_context> callbacks;
+
+      spinlock lock;
   };
 
   extern logger out;
