@@ -88,9 +88,9 @@ namespace neam::threading
 
       /// \brief allocate and construct a task
       /// deallocation is handled automatically
-      raii_task_wrapper get_task(group_t task_group, function_t&& func);
+      task_wrapper get_task(group_t task_group, function_t&& func);
 
-      raii_task_wrapper get_task(id_t id, function_t&& func)
+      task_wrapper get_task(id_t id, function_t&& func)
       {
         const group_t group = get_group_id(id);
         check::debug::n_assert(group != 0xFF, "group name does not exists?");
@@ -99,13 +99,7 @@ namespace neam::threading
 
       /// \brief allocate and construct a task that can span multiple frames / be executed anywhere in a frame
       /// deallocation is handled automatically
-      raii_task_wrapper get_long_duration_task(function_t&& func);
-
-      /// \brief Mark the setup of the task as complete and allow it to run (avoid race-conditions in the setup)
-      /// \note Creating a task an not adding it will cause the task to never run (if it's a non-transient_tasks)
-      ///       or a deadlock (threads will wait for the end of a task group, but the task is never pushed to run)
-      /// using a task raii wrapper to automatically push the task at the end of scope is the preferred way to deal with that.
-      void add_task_to_run(task& t);
+      task_wrapper get_long_duration_task(function_t&& func);
 
       /// \brief run a task
       /// \note this allows a thread to participate on a task-by-task basis, without commiting the whole thread.
@@ -114,7 +108,7 @@ namespace neam::threading
 
       /// \brief Wait for a task that can be run
       /// Does (should) not spin
-      void wait_for_a_task() const;
+      void wait_for_a_task();
 
       /// \brief run tasks for the specified duration.
       /// \note The system may either undershoot or overshoot the duration.
@@ -122,6 +116,12 @@ namespace neam::threading
       std::chrono::microseconds run_tasks(std::chrono::microseconds duration);
 
     private:
+      /// \brief Mark the setup of the task as complete and allow it to run (avoid race-conditions in the setup)
+      /// \note Creating a task an not adding it will cause the task to never run (if it's a non-transient_tasks)
+      ///       or a deadlock (threads will wait for the end of a task group, but the task is never pushed to run)
+      /// using a task raii wrapper to automatically push the task at the end of scope is the preferred way to deal with that.
+      void add_task_to_run(task& t);
+
       void destroy_task(task& t);
 
       // Try to advance the frame-state
@@ -139,7 +139,7 @@ namespace neam::threading
 
       // Tasks that belong to a task group. Deletion is done at the end of the frame (no need to manually deallocate tasks this way)
       // Tasks allocated this way must have a task group and must run inside the frame it is allocated.
-      cr::frame_allocator<16 * 1024, true> transient_tasks;
+      cr::frame_allocator<1024 * sizeof(task), true> transient_tasks;
 
       // Tasks that can run on multiple frames / are lower priority (they are used to fill gaps)
       // Those tasks don't belong to a task group (or more explicitly belong to task group 0)
@@ -152,7 +152,7 @@ namespace neam::threading
       struct group_info_t
       {
         static constexpr uint32_t k_task_to_run_size = 8;
-        cr::ring_buffer<task*, 1024> tasks_to_run[k_task_to_run_size];
+        cr::ring_buffer<task*, 2048> tasks_to_run[k_task_to_run_size];
         std::atomic<uint32_t> insert_buffer_index = 0;
         std::atomic<uint32_t> remaining_tasks = 0;
         std::atomic<bool> is_completed = false;
@@ -164,7 +164,6 @@ namespace neam::threading
 
       struct chain_info_t
       {
-        spinlock wlock;
         bool ended = false;
         uint16_t index = 0;
       };
@@ -174,9 +173,9 @@ namespace neam::threading
         std::deque<group_info_t> groups;
         std::deque<chain_info_t> chains;
 
-        std::atomic<uint32_t> threads_in_frame_state = 0;
-        std::atomic<uint32_t> tasks_that_can_run = 0;
+        alignas(64) std::atomic<uint32_t> tasks_that_can_run = 0;
 
+        uint32_t frame_key = 0;
         spinlock lock;
       };
       frame_state_t frame_state;

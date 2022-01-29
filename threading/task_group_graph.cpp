@@ -229,7 +229,7 @@ namespace neam::threading
       // write the jump table:
       for (auto& it : chains)
       {
-        ret.opcodes.push_back({ir_opcode::declare_chain_index, count + (uint16_t)ret.chain_count});
+        ret.opcodes.push_back({ir_opcode::declare_chain_index, static_cast<uint16_t>(count + (uint16_t)ret.chain_count)});
         count += (uint16_t)it.size();
       }
 

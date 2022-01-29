@@ -34,9 +34,24 @@ namespace neam::threading
     manager.destroy_task(*this);
   }
 
-  void task::push_to_run()
+  void task::push_to_run(bool from_wrapper)
   {
+    // Avoid super weird and hard to debug race conditions
+    if (!from_wrapper && held_by_wrapper) return;
+
+    check::debug::n_assert(from_wrapper == held_by_wrapper, "incoherent state");
+
     manager.add_task_to_run(*this);
+
+    held_by_wrapper = false;
+  }
+
+  /// \brief Chain a task
+  task& task::then(function_t&& fnc)
+  {
+    auto wr = manager.get_task(get_task_group(), std::move(fnc));
+    wr->add_dependency_to(*this);
+    return *wr;
   }
 }
 

@@ -59,7 +59,7 @@ namespace neam::cr
 
         // no data: if we have one space left, we cannot store data
         // as rh == wh is the empty buffer
-        if (rh - wh == 1)
+        if (rh - wh == 1 || entry_count == (Size - 2))
         {
           return false;
         }
@@ -74,22 +74,7 @@ namespace neam::cr
       Type pop_front(bool& has_data)
       {
         std::lock_guard<spinlock> _lg(lock);
-        const uint32_t rh = get_head(read_head);
-        const uint32_t wh = get_head(write_head);
-
-        // no data
-        if (rh == wh)
-        {
-          // revert the read head
-          has_data = false;
-          return {};
-        }
-
-        // has data
-        --entry_count;
-        ++read_head;
-        has_data = true;
-        return array[rh];
+        return unlocked_pop_front(has_data);
       }
 
       Type quick_pop_front(bool& has_data)
@@ -101,22 +86,7 @@ namespace neam::cr
         }
         std::lock_guard<spinlock> _lg(lock, std::adopt_lock);
 
-        const uint32_t rh = get_head(read_head);
-        const uint32_t wh = get_head(write_head);
-
-        // no data
-        if (rh == wh)
-        {
-          // revert the read head
-          has_data = false;
-          return {};
-        }
-
-        // has data
-        --entry_count;
-        ++read_head;
-        has_data = true;
-        return array[rh];
+        return unlocked_pop_front(has_data);
       }
 
       uint32_t size() const
@@ -138,13 +108,35 @@ namespace neam::cr
         return (h % Size);
       }
 
+      Type unlocked_pop_front(bool& has_data)
+      {
+        const uint32_t rh = get_head(read_head);
+        const uint32_t wh = get_head(write_head);
+
+        // no data
+        if (rh == wh || entry_count == 0)
+        {
+          has_data = false;
+          return {};
+        }
+
+        // has data
+        --entry_count;
+        ++read_head;
+        has_data = true;
+//         return array[rh];
+        Type temp = array[rh];
+        array[rh] = {};
+        return temp;
+      }
+
     private:
-      mutable spinlock lock;
       uint32_t entry_count = 0;
       uint32_t read_head = 0;
       uint32_t write_head = 0;
 
       Type array[Size + 1];
+      mutable spinlock lock;
   };
 }
 
