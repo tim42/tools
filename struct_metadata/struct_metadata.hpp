@@ -32,6 +32,11 @@
 
 #define N_METADATA_STRUCT(Struct) template<> struct n_metadata_member_definitions<Struct> : public ::neam::metadata::internal::member_definition_base<Struct>
 
+
+#define N_METADATA_STRUCT_TPL(Struct, ...) struct n_metadata_member_definitions<Struct<__VA_ARGS__>> : public ::neam::metadata::internal::member_definition_base<Struct<__VA_ARGS__>>
+
+#define N_DECLARE_STRUCT_TYPE_TPL(Struct, ...) using struct_type = Struct<__VA_ARGS__>
+
 #define N_MEMBER_DEF_EX(Struct, Member) ::neam::metadata::internal::member_definition<decltype(Struct::Member), offsetof(Struct, Member), #Member>
 
 /// \brief Entry in the member_list type of serializable structs
