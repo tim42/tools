@@ -55,7 +55,7 @@ namespace neam::rle
     static_assert(!std::is_pointer_v<T>, "T must not be a pointer. Pointers are not supported.");
     static_assert(!std::is_reference_v<T>, "T must not be a reference. References are not supported.");
 
-    static void encode(encoder& ec, const T& v, status& st)
+    static void encode(encoder& ec, const T& v, status& /*st*/)
     {
       memcpy(ec.allocate(sizeof(T)), &v, sizeof(T));
     }
@@ -273,7 +273,7 @@ namespace neam::rle
   {
     using value_type = typename T::value_type;
     static void reserve(T& v, size_t c) requires concepts::ReservableContainer<T> { v.reserve(c); }
-    static void reserve(T& v, size_t c) { }
+    static void reserve(T& /*v*/, size_t /*c*/) { }
 
     static void add(T&v, value_type&& vt, unsigned) requires concepts::EmplaceHintContainer<T> { v.emplace_hint(v.end(), std::move(vt)); }
     static void add(T&v, value_type&& vt, unsigned) requires concepts::EmplaceBackContainer<T> { v.emplace_back(std::move(vt)); }
