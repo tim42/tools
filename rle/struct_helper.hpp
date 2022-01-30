@@ -55,7 +55,7 @@ namespace neam::rle
     ///  // optional, only if current version != min_supported_version
     ///  // each struct (except the first) in the version list must have this function taking a r-value of the previous version
     ///  // (note that the concept does not test this assumption, but it will fail to compile anyway)
-    ///  static MyAwesomeStruct migrate_from(MyPreviousAwesomeStruct &&prev);
+    ///  void migrate_from(MyPreviousAwesomeStruct &&prev);
     template<typename T>
     concept VersionedStruct = requires(T v)
     {
@@ -120,12 +120,19 @@ namespace neam::rle
       } (std::make_index_sequence<ct::list::size<typename n_metadata_member_definitions<T>::member_list>> {});
     }
 
-    /// \brief Decode, assumes version check has been done before
+    /// \brief Decode in a new object, assumes version check has been done before
     template<concepts::SerializableStruct ST>
-    static ST decode_struct(decoder& dc, status& st)
+    static ST decode_struct(decoder& dc, status& st) requires std::default_initializable<T>
     {
       ST v;
+      decode_struct(v, dc, st);
+      return v;
+    }
 
+    /// \brief Decode in-place, assumes version check has been done before
+    template<concepts::SerializableStruct ST>
+    static void decode_struct(ST& v, decoder& dc, status& st)
+    {
       [&st, &dc, &v]<size_t... Indices>(std::index_sequence<Indices...>)
       {
         ([&st, &dc, &v]<size_t Index>()
@@ -146,25 +153,41 @@ namespace neam::rle
       } (std::make_index_sequence<ct::list::size<typename n_metadata_member_definitions<ST>::member_list>> {});
 
       post_deserialize(v);
+    }
+
+    /// \brief Handle data migration
+    /// \note T must be default constructible
+    static T decode(decoder& dc, status& st) requires std::default_initializable<T>
+    {
+      T v;
+      decode(v, dc, st);
       return v;
     }
 
     /// \brief Handle data migration
-    static T decode(decoder& dc, status& st)
+    /// \note In-place decode (for non-default constructible T)
+    static void decode(T& dest, decoder& dc, status& st)
     {
       const auto [version, success] = dc.decode<uint32_t>();
       if (!success || version < get_min_version() || version > get_version())
-        return (st = status::failure), T{};
+      {
+        st = status::failure;
+        return;
+      }
 
       if constexpr (get_min_version() == get_version())
       {
-        return decode_struct<T>(dc, st);
+        decode_struct<T>(dest, dc, st);
+        return;
       }
       else
       {
         // Handle up-to-date data:
         if (version == get_version())
-          return decode_struct<T>(dc, st);
+        {
+          decode_struct<T>(dest, dc, st);
+          return;
+        }
 
         // We now we aren't up-to-date. Handle the migration.
         // We want something like that:
@@ -178,9 +201,9 @@ namespace neam::rle
         //  construct at the data-version,
         //  then migrate until the current one
         typename ct::list::extract<typename T::version_list>::template as<std::variant> version_variant;
-        [&st, &dc, &version_variant, version = version]<size_t... Indices>(std::index_sequence<Indices...>)
+        [&dest, &st, &dc, &version_variant, version = version]<size_t... Indices>(std::index_sequence<Indices...>)
         {
-          ([&st, &dc, &version_variant, version]<size_t Index>()
+          ([&dest, &st, &dc, &version_variant, version]<size_t Index>()
           {
             using version_struct = ct::list::get_type<typename T::version_list, Index>;
             static constexpr uint32_t version_number = get_min_version() + Index;
@@ -196,7 +219,16 @@ namespace neam::rle
               if constexpr (Index > 0)
               {
                 // migrate:
-                version_variant = version_struct::migrate_from(*std::get_if<Index - 1>(version_variant));
+                if constexpr (std::is_same_v<T, version_struct>)
+                {
+                  dest.migrate_from(*std::get_if<Index - 1>(version_variant));
+                }
+                else
+                {
+                  version_struct v;
+                  v.migrate_from(*std::get_if<Index - 1>(version_variant));
+                  version_variant.emplace(std::move(v));
+                }
               }
               else
               {
@@ -206,10 +238,7 @@ namespace neam::rle
           } .template operator()<Indices>(), ...);
         } (std::make_index_sequence<ct::list::size<typename T::version_list>> {});
 
-        if (st == status::failure)
-          return {};
-
-        return *std::get_if<get_version() - get_min_version()>(version_variant);
+        return;
       }
     }
   };
