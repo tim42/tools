@@ -322,13 +322,11 @@ namespace neam::threading
     task* ptr = get_task_to_run();
     if (ptr)
     {
-      ptr->run();
-      return;
+      return ptr->run();
     }
 
     // try to advance the state
-    if (advance())
-      return;
+    advance();
   }
 
   void task_manager::wait_for_a_task()
@@ -362,6 +360,72 @@ namespace neam::threading
       // try to advance the state to avoid being locked in waiting:
       advance();
     }
+  }
+
+  void task_manager::actively_wait_for(task& t)
+  {
+    const group_t group = t.get_task_group();
+
+    // This check prevent the most common deadlock pattern where the task calling
+    // the function is the one preventing the task's group to be running.
+    // Having this check here may trigger in some cases where it shouldn't,
+    // but if the group of the task actively waiting and the task provided in param is the same,
+    // the assert will never trigger.
+    check::debug::n_assert(frame_state.groups[group].is_started.load(std::memory_order_acquire), "actively_wait_for must be called on a task whose group is already running");
+
+    // we don't use the locked version here to avoid being locked-out during the task execution
+    while (!t.unlock_is_completed())
+      run_a_task();
+  }
+
+  std::chrono::microseconds task_manager::run_tasks(std::chrono::microseconds duration)
+  {
+    // number of times we can miss a task before returning
+    constexpr uint32_t k_max_unlucky_strikes = 16;
+
+    uint32_t unlucky_strikes = 0;
+    uint32_t task_count = 0;
+
+    const std::chrono::time_point start = std::chrono::high_resolution_clock::now();
+    while (unlucky_strikes < k_max_unlucky_strikes)
+    {
+      // grab a random task and run it
+      task* ptr = get_task_to_run();
+      if (ptr)
+      {
+        ptr->run();
+        ++task_count;
+      }
+      else if (!advance())
+      {
+        ++unlucky_strikes;
+      }
+      else
+      {
+        // treat advance as a task if it returns true
+        ++task_count;
+      }
+
+      const std::chrono::time_point now = std::chrono::high_resolution_clock::now();
+      const std::chrono::microseconds elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - start);
+
+      // we overshooted, return
+      if (elapsed >= duration)
+        return elapsed;
+
+      // check if another task will make us overshoot:
+      if (task_count > 0)
+      {
+        const std::chrono::microseconds projected_duration = (elapsed / task_count) * (task_count + 1);
+        if (projected_duration >= duration)
+          return elapsed;
+      }
+    }
+
+    // we could not find a task, so we return early:
+    const std::chrono::time_point now = std::chrono::high_resolution_clock::now();
+    const std::chrono::microseconds elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - start);
+    return elapsed;
   }
 
   void task_manager::reset_state()

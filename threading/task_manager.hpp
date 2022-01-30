@@ -99,19 +99,48 @@ namespace neam::threading
 
       /// \brief allocate and construct a task that can span multiple frames / be executed anywhere in a frame
       /// deallocation is handled automatically
+      /// "long-duration" tasks does not belong to a given task-group and thus can be executed during any downtimes
+      /// (including during a state-reset at the end of a "frame").
+      /// This also means that only long-duration tasks can depend on other long-duration tasks.
+      ///
+      /// \warning Spawning any non-long duration tasks from within a long-duration task is undefined behavior and may lead to crashs
       task_wrapper get_long_duration_task(function_t&& func);
 
-      /// \brief run a task
+      /// \brief tentatively run a task
+      ///
+      /// Can be safely called inside a task.
+      /// (please note that the function does not have access to its task object and using it will deadlock)
+      ///
       /// \note this allows a thread to participate on a task-by-task basis, without commiting the whole thread.
-      /// To commit a thread to run tasks, simply loop over that function.
+      ///       To commit a thread to run tasks, simply loop over that function.
+      ///       (possibly calling wait_for_a_task to avoid spining)
+      ///
+      /// \note most compilers will directly jump to the task (and not perform a call), so this function may not appear in callstacks
       void run_a_task();
 
-      /// \brief Wait for a task that can be run
-      /// Does (should) not spin
+      /// \brief Wait for a task that can be run.
+      /// May decide to sleep the thread for a while if necessary to avoid hogging the CPU
+      ///
+      /// Can be safely called inside a task.
+      ///
+      /// \note Is subject to the ABA issue in multiple ways, but this should not have any negative impacts.
       void wait_for_a_task();
 
-      /// \brief run tasks for the specified duration.
+      /// \brief Actively wait for a task to be completed (run tasks untill the task is completed)
+      ///        Does not call to wait_for_a_task
+      ///
+      /// Can be safely called inside a task.
+      ///
+      /// \note If called from inside a task, it is incorrect to wait for a task from a different task-group
+      ///       as it may lead to a deadlock.
+      void actively_wait_for(task& t);
+
+      /// \brief run tasks for the specified duration. (wait_for_a_task is not called)
+      ///
+      /// Can safely be called from within a task
+      ///
       /// \note The system may either undershoot or overshoot the duration.
+      /// \note The function may return early if there hasn't been any task to execute for a while
       /// \return the actual elapsed duration (as mesured internally)
       std::chrono::microseconds run_tasks(std::chrono::microseconds duration);
 
