@@ -241,6 +241,25 @@ namespace neam::rle
         return;
       }
     }
+
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      std::vector<type_reference> contained_types;
+
+      [&mt, &contained_types]<size_t... Indices>(std::index_sequence<Indices...>)
+      {
+        ([&mt, &contained_types]<size_t Index>()
+        {
+          using member = ct::list::get_type<typename n_metadata_member_definitions<T>::member_list, Index>;
+          coder<typename member::type>::generate_metadata(mt);
+          contained_types.push_back(mt.ref<typename member::type>(member::name));
+        }.template operator()<Indices>(), ...);
+      } (std::make_index_sequence<ct::list::size<typename n_metadata_member_definitions<T>::member_list>> {});
+
+      mt.add_type<T>({ type_mode::versioned_tuple, sizeof(T), std::move(contained_types) });
+    }
   };
 }
+
+
 

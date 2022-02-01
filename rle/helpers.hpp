@@ -39,6 +39,7 @@
 #include "rle_decoder.hpp"
 
 #include "enum.hpp"
+#include "serialization_metadata.hpp"
 
 namespace neam::rle
 {
@@ -71,6 +72,11 @@ namespace neam::rle
       st = status::failure;
       return {};
     }
+
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      mt.add_type<T>( { type_mode::raw, sizeof(T), } );
+    }
   };
 
   /// \brief Helper for std::basic_string (includes std::string)
@@ -94,6 +100,12 @@ namespace neam::rle
       st = status::failure;
       return {};
     }
+
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      mt.add_type<str_type>( { type_mode::container, 0, { mt.ref<CharT>() } } );
+      coder<CharT>::generate_metadata(mt);
+    }
   };
 
   /// \brief std::pair wrapper
@@ -114,6 +126,12 @@ namespace neam::rle
         coder<S>::decode(dc, st),
       };
     }
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      mt.add_type<pair_type>( { type_mode::tuple, sizeof(pair_type), { mt.ref<F>(), mt.ref<S>() } } );
+      coder<F>::generate_metadata(mt);
+      coder<S>::generate_metadata(mt);
+    }
   };
 
   /// \brief std::tuple wrapper
@@ -131,6 +149,12 @@ namespace neam::rle
     static tuple_type decode(decoder& dc, status& st)
     {
       return { coder<T>::decode(dc, st)... };
+    }
+
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      mt.add_type<tuple_type>( { type_mode::tuple, sizeof(tuple_type), { mt.ref<T>()... } } );
+      (coder<T>::generate_metadata(mt), ...);
     }
   };
 
@@ -177,6 +201,12 @@ namespace neam::rle
       } (std::make_index_sequence<sizeof...(T)> {});
       return v;
     }
+
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      mt.add_type<opt_type>( { type_mode::variant, 0, { mt.ref<T>()... } } );
+      (coder<T>::generate_metadata(mt), ...);
+    }
   };
 
   template<typename T>
@@ -195,6 +225,12 @@ namespace neam::rle
         return {};
 
       return {coder<T>::decode(dc, st)};
+    }
+
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      mt.add_type<opt_type>({ type_mode::variant, 0, { mt.ref<T>() } });
+      coder<T>::generate_metadata(mt);
     }
   };
 
@@ -217,8 +253,13 @@ namespace neam::rle
       memcpy(v.data.get(), subdc.get_address(), v.size);
       return v;
     }
-  };
 
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      mt.add_type<raw_data>({ type_mode::container, 0, { mt.ref<uint8_t>() } });
+      coder<uint8_t>::generate_metadata(mt);
+    }
+  };
 
   // Some utility concepts
   namespace concepts
@@ -304,6 +345,12 @@ namespace neam::rle
       }
 
       return v;
+    }
+
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      mt.add_type<T>({ type_mode::container, 0, { mt.ref<value_type>() } });
+      coder<value_type>::generate_metadata(mt);
     }
   };
 }

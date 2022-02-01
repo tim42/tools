@@ -44,4 +44,53 @@
 
 namespace neam::rle
 {
+  // shortcuts for easy de/serialization /  metadata generation:
+
+  /// \brief Serialize. Returns an empty raw_data on failure
+  template<typename T>
+  static raw_data serialize(const T& v, status* opt_st = nullptr)
+  {
+    cr::memory_allocator ma;
+    encoder ec(ma);
+    status st = status::success;
+    coder<T>::encode(ec, v, st);
+    if (opt_st != nullptr)
+      *opt_st = st;
+    if (st == status::failure)
+      return {};
+    return ec.to_raw_data();
+  }
+
+  /// \brief Deserialize. Returns a default constructed object if it failed.
+  template<typename T>
+  static T deserialize(const raw_data& data, status* opt_st = nullptr)
+  {
+    status st;
+    if (opt_st == nullptr)
+      opt_st = &st;
+    *opt_st = status::success;
+    decoder dc = data;
+    return coder<T>::decode(dc, *opt_st);
+  }
+
+  /// \brief Deserialize in-place, destructing and re-constructing members as needed
+  template<concepts::SerializableStruct T>
+  status in_place_deserialize(const raw_data& data, T& dest)
+  {
+    status st = status::success;
+    decoder dc = data;
+    coder<T>::decode(dest, dc, st);
+    return st;
+  }
+
+  /// \brief Generate the metadata for a given type
+  template<typename T>
+  static serialization_metadata generate_metadata()
+  {
+    serialization_metadata mt;
+    mt.root = ct::type_hash<T>;
+    coder<T>::generate_metadata(mt);
+    return mt;
+  }
+  
 }

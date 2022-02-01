@@ -33,5 +33,24 @@ namespace neam::rle
     failure = 0,
     success = 1,
   };
+
+  enum class type_mode : uint32_t
+  {
+    raw,        // just raw binary, nothing more.
+    tuple,      // tuple, structs, ... (should be named struct but guess what, it's a keyword)
+    container,  // any stl container matches that. Basically a count + a list of the same type
+    variant,    // should be named union, but same issue as with struct.
+                // Is a [index] + {optional data depending on index} (with index == 0 meaning no data)
+                // Works for both std::optional and std::variant
+
+    // flags:
+
+    version_flag = 1 << 8, // present if the type is prefixed by a version.
+                            // Currently, only tuples can have versions.
+
+    // aliases:
+
+    versioned_tuple = tuple | version_flag,
+  };
 }
 
