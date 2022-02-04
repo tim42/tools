@@ -29,7 +29,7 @@
 
 namespace neam::threading
 {
-  group_t task_group_dependency_tree::add_task_group(id_t id)
+  group_t task_group_dependency_tree::add_task_group(id_t id, std::string group_debug_name)
   {
     const group_t key = task_group_id;
     if (key == 0 || key == 0xFF)
@@ -52,6 +52,7 @@ namespace neam::threading
       return key;
     }
     group_names.emplace(id, key);
+    debug_names.emplace(key, std::move(group_debug_name));
     roots.emplace(key);
     dependencies.emplace(key, links{});
     return key;
@@ -94,6 +95,7 @@ namespace neam::threading
       return {};
 
     resolved_graph ret;
+    ret.debug_names = debug_names;
     ret.groups = group_names;
     std::vector<std::vector<ir_opcode>> chains;
 

@@ -96,6 +96,7 @@ namespace neam::threading
     std::map<id_t, group_t> groups;
     uint32_t chain_count;
     std::vector<ir_opcode> opcodes;
+    std::map<group_t, std::string> debug_names;
 
     void print_debug() const;
   };
@@ -106,7 +107,7 @@ namespace neam::threading
   {
     public:
       /// \brief Add a task group. Cannot be task::k_non_transient_task_group.
-      group_t add_task_group(id_t id);
+      group_t add_task_group(id_t id, std::string group_debug_name);
 
       /// \brief makes \p group dependent on \p dependency
       /// (\p group will not execute before \p dependency has completed all its tasks)
@@ -132,6 +133,7 @@ namespace neam::threading
       };
       std::set<group_t> roots;
       std::map<group_t, links> dependencies;
+      std::map<group_t, std::string> debug_names;
 
       group_t task_group_id = 1;
   };
