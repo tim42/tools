@@ -6,6 +6,7 @@
   #include <fmt/format.h>
   #include <fmt/color.h>
   #include "../chrono.hpp"
+  #include "../tracy.hpp"
 #endif
 
 namespace neam::cr
@@ -48,20 +49,27 @@ namespace neam::cr
   void print_log_to_console(void*, neam::cr::logger::severity s, const std::string& msg, std::source_location loc)
   {
     static const fmt::text_style error = fmt::emphasis::bold | fmt::fg(fmt::color::red);
+    static const uint32_t error_color = 0xFF5500;
     static const fmt::text_style warn = fmt::emphasis::bold | fmt::fg(fmt::color::orange);
+    static const uint32_t warn_color = 0xFFBB00;
     static const fmt::text_style normal;
+    static const uint32_t normal_color = 0xFFFFFF;
     static const fmt::text_style debug = fmt::fg(fmt::color::gray);
+    static const uint32_t debug_color = 0x555555;
     fmt::text_style style;
+    uint32_t color;
     switch (s)
     {
-      case neam::cr::logger::severity::debug: style = debug; break;
-      case neam::cr::logger::severity::message: style = normal; break;
-      case neam::cr::logger::severity::warning: style = warn; break;
-      case neam::cr::logger::severity::error: style = error; break;
-      case neam::cr::logger::severity::critical: style = error; break;
+      case neam::cr::logger::severity::debug: style = debug; color = debug_color; break;
+      case neam::cr::logger::severity::message: style = normal; color = normal_color; break;
+      case neam::cr::logger::severity::warning: style = warn; color = warn_color; break;
+      case neam::cr::logger::severity::error: style = error; color = error_color;break;
+      case neam::cr::logger::severity::critical: style = error; color = 0xFF0000; break;
     }
 
-    fmt::print(style, "{}", format_log_to_string(s, msg, loc));
+    std::string msg_str = format_log_to_string(s, msg, loc);
+    TRACY_LOG_COLOR(msg_str.data(), msg_str.size(), color);
+    fmt::print(style, "{}", msg_str);
     fmt::print(fmt::text_style{}, "\n"); // reset style to the term default (avoid leaving with red everywhere in case of a critical error)
   }
 #endif

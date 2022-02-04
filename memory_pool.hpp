@@ -33,6 +33,8 @@
 #include <cstdint>
 #include <memory>
 
+#include "tracy.hpp"
+
 namespace neam
 {
   namespace cr
@@ -148,6 +150,8 @@ namespace neam
           }
 
           object_count = 0;
+          TRACY_PLOT(pool_debug_name.data(), (int64_t)object_count);
+          TRACY_PLOT_CONFIG(pool_debug_name.data(), tracy::PlotFormatType::Memory);
           chunk_count = 0;
           first_chunk = nullptr;
           first_free = nullptr;
@@ -173,6 +177,7 @@ namespace neam
 
           // reset the state:
           object_count = 0;
+          TRACY_PLOT(pool_debug_name.data(), (int64_t)object_count);
           for (chunk* chk = first_chunk; chk != nullptr; chk = chk->next)
           {
             chk->object_count = 0;
@@ -199,6 +204,7 @@ namespace neam
         {
           if (!first_chunk)
           {
+            TRACY_PLOT_CONFIG(pool_debug_name.data(), tracy::PlotFormatType::Memory);
             if (!alloc_chunk())
               return nullptr;
           }
@@ -232,6 +238,7 @@ namespace neam
           slot->set_free(false);
           ++(slot->get_chunk()->object_count);
           ++object_count;
+          TRACY_PLOT(pool_debug_name.data(), (int64_t)object_count);
           return &slot->obj;
         }
 
@@ -247,6 +254,7 @@ namespace neam
             slot->set_free(true);
             --slot->get_chunk()->object_count;
             --object_count;
+            TRACY_PLOT(pool_debug_name.data(), (int64_t)object_count);
 
             slot->next = first_free;
             first_free = slot;
@@ -263,6 +271,9 @@ namespace neam
         {
           return object_count;
         }
+
+      public: // debug
+        std::string pool_debug_name;
 
       private:
         bool alloc_chunk()

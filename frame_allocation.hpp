@@ -27,6 +27,7 @@
 #pragma once
 
 #include <atomic>
+#include "tracy.hpp"
 
 namespace neam::cr
 {
@@ -99,6 +100,7 @@ namespace neam::cr
         // Setup the first chunk
         if (first_chunk == nullptr)
         {
+          TRACY_PLOT_CONFIG(pool_debug_name.data(), tracy::PlotFormatType::Memory);
           // allocate the first chunk
           first_chunk = allocate_chunk();
           current_chunk = first_chunk;
@@ -121,6 +123,8 @@ namespace neam::cr
 
         uint32_t offset = current_chunk->offset;
         current_chunk->offset += count;
+        total_memory += count;
+        TRACY_PLOT(pool_debug_name.data(), (int64_t)total_memory);
         return &current_chunk->data[offset];
       }
 
@@ -153,6 +157,7 @@ namespace neam::cr
         current = first_chunk;
         first_chunk = nullptr;
         allocation_count = 0;
+        total_memory = 0;
         current_chunk = nullptr;
 
         return allocator_state(current);
@@ -166,6 +171,7 @@ namespace neam::cr
           return;
 
         allocation_count = 0;
+        total_memory = 0;
         current_chunk = first_chunk;
 
         chunk_t* current = first_chunk;
@@ -201,6 +207,7 @@ namespace neam::cr
         chunk_t* current = first_chunk;
         first_chunk = nullptr;
         allocation_count = 0;
+        total_memory = 0;
         current_chunk = nullptr;
 
         while (current != nullptr)
@@ -241,6 +248,9 @@ namespace neam::cr
         return (Type*)(&it->data[offset_in_chunk]);
       }
 
+    public:
+      std::string pool_debug_name;
+
     private:
       static chunk_t* allocate_chunk()
       {
@@ -263,6 +273,7 @@ namespace neam::cr
     private:
       mutable spinlock lock;
       uint32_t allocation_count = 0;
+      uint64_t total_memory = 0;
 
       chunk_t* first_chunk = nullptr;
       chunk_t* current_chunk = nullptr;
