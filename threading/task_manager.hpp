@@ -34,6 +34,7 @@
 #include "../frame_allocation.hpp"
 #include "../ring_buffer.hpp"
 #include "../spinlock.hpp"
+#include "../tracy.hpp"
 
 #include <chrono>
 #include <atomic>
@@ -45,7 +46,11 @@ namespace neam::threading
   class task_manager
   {
     public: // General stuff
-      task_manager() = default;
+      task_manager()
+      {
+        transient_tasks.pool_debug_name = "task_manager::transient_tasks pool";
+        non_transient_tasks.pool_debug_name = "task_manager::non_transient_tasks pool";
+      }
 
     public: // task group stuff. WARNING MUST BE CALLED BEFORE ANY CALL TO get_task()
       /// \brief Add the compiled frame operations
@@ -164,7 +169,7 @@ namespace neam::threading
       void reset_state();
 
     private:
-      spinlock alloc_lock; // TODO: remove
+      TRACY_LOCKABLE(spinlock, alloc_lock); // TODO: remove
 
       // Tasks that belong to a task group. Deletion is done at the end of the frame (no need to manually deallocate tasks this way)
       // Tasks allocated this way must have a task group and must run inside the frame it is allocated.
@@ -187,6 +192,9 @@ namespace neam::threading
         std::atomic<bool> is_completed = false;
         std::atomic<bool> is_started = false;
 
+        // held temporarily to avoid wasting cpu time spinning waiting for a group to start
+        std::atomic<uint32_t> tasks_that_can_run = 0;
+
         std::function<void()> start_group;
         std::function<void()> end_group;
       };
@@ -195,6 +203,7 @@ namespace neam::threading
       {
         bool ended = false;
         uint16_t index = 0;
+        TRACY_LOCKABLE(spinlock, lock);
       };
 
       struct frame_state_t
@@ -203,9 +212,12 @@ namespace neam::threading
         std::deque<chain_info_t> chains;
 
         alignas(64) std::atomic<uint32_t> tasks_that_can_run = 0;
+        std::atomic<uint32_t> ended_chains = 0;
+
+        // so we can avoid spinning the advance function and instead wait
+        std::atomic<uint32_t> global_state_key = 0;
 
         uint32_t frame_key = 0;
-        spinlock lock;
       };
       frame_state_t frame_state;
 

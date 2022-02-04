@@ -27,6 +27,7 @@
 #include "task_manager.hpp"
 
 #include "../scoped_flag.hpp"
+#include "../tracy.hpp"
 
 namespace neam::threading
 {
@@ -65,7 +66,7 @@ namespace neam::threading
 
     task* ptr;
     {
-      std::lock_guard<spinlock> _lg(alloc_lock);
+      std::lock_guard<TRACY_LOCKABLE_BASE(spinlock)> _lg(alloc_lock);
       ptr = non_transient_tasks.allocate();
     }
     check::debug::n_assert(ptr != nullptr, "Failed to allocate a task");
@@ -85,13 +86,19 @@ namespace neam::threading
     if (t.key == k_non_transient_task_group)
     {
 //     t.~task();
-      std::lock_guard<spinlock> _lg(alloc_lock);
+      std::lock_guard<TRACY_LOCKABLE_BASE(spinlock)> _lg(alloc_lock);
       non_transient_tasks.deallocate(&t);
     }
 //     else delete &t;
 
     const uint32_t orig_count = frame_state.groups[group].remaining_tasks.fetch_sub(1, std::memory_order_acquire);
     check::debug::n_assert(orig_count > 0, "Invalid task count: Trying to decrement the task count when it was 0");
+
+    if (orig_count <= 1)
+    {
+      // increment the global state key as we are the last task pending for that group
+      frame_state.global_state_key.fetch_add(1, std::memory_order_relaxed);
+    }
   }
 
   void task_manager::add_task_to_run(task& t)
@@ -111,8 +118,18 @@ namespace neam::threading
     bool is_inserted = frame_state.groups[t.key].tasks_to_run[index % group_info_t::k_task_to_run_size].push_back(&t);
     check::debug::n_assert(is_inserted, "ring buffer overflow in the task_manager (group: {})", t.key);
 
-    frame_state.tasks_that_can_run.fetch_add(1, std::memory_order_release);
-    frame_state.tasks_that_can_run.notify_all();
+    // don't wake waiting thread when the task is not really usable
+    if (frame_state.groups[t.key].is_started.load(std::memory_order_seq_cst))
+    {
+      const uint32_t count = frame_state.tasks_that_can_run.fetch_add(1, std::memory_order_release);
+      frame_state.tasks_that_can_run.notify_all();
+      TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)count);
+    }
+    else
+    {
+      // The lack of atomicity here is handled in the execute group (in advance())
+      frame_state.groups[t.key].tasks_that_can_run.fetch_add(1, std::memory_order_seq_cst);
+    }
   }
 
   void task_manager::add_compiled_frame_operations(resolved_graph&& _frame_ops)
@@ -138,6 +155,15 @@ namespace neam::threading
 
   bool task_manager::advance()
   {
+    // Avoid spamming advance() and create lock contention
+    thread_local uint32_t last_global_state_key = ~0u;
+    const uint32_t global_state_key = frame_state.global_state_key.load(std::memory_order_acquire);
+    if (last_global_state_key == global_state_key)
+      return false;
+    last_global_state_key = global_state_key;
+
+    TRACY_SCOPED_ZONE_COLOR(0x0000FF);
+
     constexpr uint32_t k_function_complexity = 20;
 
     // past this threshold, run_a_task will return after the call to advance()
@@ -146,21 +172,20 @@ namespace neam::threading
 
     // arbitrary indicator of the work done here:
     uint32_t complexity = 0;
-    uint32_t ended_chains = 0;
 
-    if (!frame_state.lock.try_lock())
-      return false;
-    std::lock_guard<spinlock> _lg(frame_state.lock, std::adopt_lock);
+    // whether we should have the duty to end the frame and reset the state
+    bool should_reset_state = false;
 
+    if (frame_state.ended_chains.load(std::memory_order_acquire) != frame_ops.chain_count)
     {
       for (auto& chain : frame_state.chains)
       {
         {
-          if (chain.ended)
-          {
-            ++ended_chains;
+          if (!chain.lock.try_lock())
             continue;
-          }
+          std::lock_guard<TRACY_LOCKABLE_BASE(spinlock)> _lg(chain.lock, std::adopt_lock);
+          if (chain.ended)
+            continue;
 
           bool loop = true;
           while (loop)
@@ -172,8 +197,10 @@ namespace neam::threading
             {
               case ir_opcode::end_chain:
               {
-                ++ended_chains;
                 chain.ended = true;
+                const uint32_t ended_chains = frame_state.ended_chains.fetch_add(1, std::memory_order_release);
+                if (ended_chains + 1 == frame_ops.chain_count)
+                  should_reset_state = true;
                 loop = false; // we are at the end of the chain, nothing to do
                 break;
               }
@@ -220,9 +247,11 @@ namespace neam::threading
 
                   if (!has_run_cb && group_info.end_group)
                   {
+                    TRACY_SCOPED_ZONE;
                     complexity += k_function_complexity;
                     group_info.end_group();
                   }
+                  TRACY_FRAME_MARK_END(frame_ops.debug_names[task_group_to_wait].data());
                   break;
                 }
 
@@ -233,6 +262,9 @@ namespace neam::threading
               case ir_opcode::execute_task_group:
               {
                 const group_t task_group_to_execute = op.arg;
+
+                TRACY_FRAME_MARK_START(frame_ops.debug_names[task_group_to_execute].data());
+
                 check::debug::n_assert(task_group_to_execute != k_non_transient_task_group,
                                        "Invalid frame operation: execute_task_group: cannot execute the non-transient group");
                 check::debug::n_assert(task_group_to_execute < frame_state.groups.size(),
@@ -249,8 +281,15 @@ namespace neam::threading
                   complexity += k_function_complexity;
                   group_info.start_group();
                 }
-                const bool was_started = group_info.is_started.exchange(true, std::memory_order_release);
+                const bool was_started = group_info.is_started.exchange(true, std::memory_order_seq_cst);
                 check::debug::n_assert(!was_started, "Invalid frame operation: execute_task_group: task group was already started");
+
+                // we then wake all the threads
+                uint32_t tasks_to_run = group_info.tasks_that_can_run.load(std::memory_order_seq_cst);
+                while (!group_info.tasks_that_can_run.compare_exchange_strong(tasks_to_run, 0, std::memory_order_seq_cst));
+
+                frame_state.tasks_that_can_run.fetch_add(tasks_to_run, std::memory_order_release);
+                frame_state.tasks_that_can_run.notify_all();
 
                 ++chain.index;
 
@@ -264,7 +303,7 @@ namespace neam::threading
       }
     } // scoped counter
 
-    if (ended_chains == frame_ops.chain_count)
+    if (should_reset_state)
     {
       reset_state();
     }
@@ -275,9 +314,12 @@ namespace neam::threading
 
   task* task_manager::get_task_to_run()
   {
+
     thread_local group_t start_group = 1;
-    if (frame_state.groups.empty())
+    if (frame_state.groups.empty() || frame_state.tasks_that_can_run.load(std::memory_order_acquire) == 0)
       return nullptr;
+
+    TRACY_SCOPED_ZONE;
 
     start_group += 1;
 
@@ -301,14 +343,15 @@ namespace neam::threading
       for (uint32_t j = 0; j < group_info_t::k_task_to_run_size; ++j)
       {
         bool has_task = false;
-        task* ptr = group_info.tasks_to_run[(j + base_index) % group_info_t::k_task_to_run_size].pop_front(has_task);
-//         task* ptr = group_info.tasks_to_run[(j + base_index) % group_info_t::k_task_to_run_size].quick_pop_front(has_task);
+//         task* ptr = group_info.tasks_to_run[(j + base_index) % group_info_t::k_task_to_run_size].pop_front(has_task);
+        task* ptr = group_info.tasks_to_run[(j + base_index) % group_info_t::k_task_to_run_size].quick_pop_front(has_task);
         if (!has_task)
           continue;
         check::debug::n_assert(ptr != nullptr, "Corrupted task data");
 
         check::debug::n_assert(ptr->get_frame_key() == frame_state.frame_key, "Trying to run a task that has outlived its lifespan");
-        frame_state.tasks_that_can_run.fetch_sub(1, std::memory_order_release);
+        const uint32_t count = frame_state.tasks_that_can_run.fetch_sub(1, std::memory_order_release);
+        TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)count);
         return ptr;
       }
     }
@@ -318,19 +361,22 @@ namespace neam::threading
 
   void task_manager::run_a_task()
   {
+    // try to advance the state
+    if (advance())
+      return;
+
     // grab a random task and run it
     task* ptr = get_task_to_run();
     if (ptr)
     {
+      TRACY_SCOPED_ZONE_COLOR(0x00FF00);
       return ptr->run();
     }
-
-    // try to advance the state
-    advance();
   }
 
   void task_manager::wait_for_a_task()
   {
+      TRACY_SCOPED_ZONE_COLOR(0xFF0000);
     if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
       return;
 
@@ -348,6 +394,7 @@ namespace neam::threading
 
       if (loop_count >= k_max_loop_count_before_sleep)
       {
+        TRACY_SCOPED_ZONE;
         // avoid spining and consuming all the cpu:
         std::this_thread::sleep_for(std::chrono::microseconds(100));
       }
@@ -430,35 +477,58 @@ namespace neam::threading
 
   void task_manager::reset_state()
   {
-    ++frame_state.frame_key;
-    if (frame_state.frame_key == ~0u)
-      frame_state.frame_key = 0;
-
-    // reset the chains:
-    for (uint16_t i = 0; i < frame_ops.chain_count; ++i)
+    TRACY_FRAME_MARK;
+    TRACY_FRAME_MARK_START_CSTR("task_manager/reset_state");
     {
-      frame_state.chains[i].index = frame_ops.opcodes[i].arg;
-      frame_state.chains[i].ended = false;
-    }
+      TRACY_SCOPED_ZONE;
 
-    transient_tasks.fast_clear();
-
-    // reset groups:
-    bool is_persistent_tasks = true;
-    for (auto& it : frame_state.groups)
-    {
-      if (is_persistent_tasks)
+      // lock the chains:
+      for (uint16_t i = 0; i < frame_ops.chain_count; ++i)
       {
-        is_persistent_tasks = false;
-        continue;
+        frame_state.chains[i].lock.lock();
       }
-      check::debug::n_assert(it.remaining_tasks == 0, "Trying to reset state while a task group has still tasks running");
-      check::debug::n_assert(it.is_completed, "Trying to reset state while a task group is not completed");
 
-      it.remaining_tasks.store(0, std::memory_order_release);
-      it.is_started.store(false, std::memory_order_release);
-      it.is_completed.store(false, std::memory_order_release);
+      ++frame_state.frame_key;
+      if (frame_state.frame_key == ~0u)
+        frame_state.frame_key = 0;
+
+      // reset the chains:
+      for (uint16_t i = 0; i < frame_ops.chain_count; ++i)
+      {
+        frame_state.chains[i].index = frame_ops.opcodes[i].arg;
+        frame_state.chains[i].ended = false;
+      }
+
+      transient_tasks.fast_clear();
+
+      // reset groups:
+      bool is_persistent_tasks = true;
+      for (auto& it : frame_state.groups)
+      {
+        if (is_persistent_tasks)
+        {
+          is_persistent_tasks = false;
+          continue;
+        }
+        check::debug::n_assert(it.remaining_tasks == 0, "Trying to reset state while a task group has still tasks running");
+        check::debug::n_assert(it.is_completed, "Trying to reset state while a task group is not completed");
+
+        it.remaining_tasks.store(0, std::memory_order_release);
+        it.is_started.store(false, std::memory_order_release);
+        it.is_completed.store(false, std::memory_order_release);
+      }
+      // unlock the chains:
+      for (uint16_t i = 0; i < frame_ops.chain_count; ++i)
+      {
+        frame_state.chains[i].lock.unlock();
+      }
+
+      frame_state.ended_chains.store(0, std::memory_order_release);
+
+      // set a new state key
+      frame_state.global_state_key.store(0, std::memory_order_release);
     }
+    TRACY_FRAME_MARK_END_CSTR("task_manager/reset_state");
   }
 }
 
