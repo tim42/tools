@@ -222,6 +222,7 @@ namespace neam::threading
         push_to_run();
         t = o.t;
         o.t = nullptr;
+        return *this;
       }
       ~task_wrapper() { push_to_run(); }
 
