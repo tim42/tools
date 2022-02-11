@@ -47,10 +47,10 @@ namespace neam::threading
   {
     check::debug::n_assert(task_group < frame_state.groups.size(), "Trying to create a task from a task group that does not exists. Did you forgot to create a task group?");
 
-    frame_state.groups[task_group].remaining_tasks.fetch_add(1, std::memory_order_release);
-
     if (task_group == k_non_transient_task_group)
       return get_long_duration_task(std::move(func));
+
+    frame_state.groups[task_group].remaining_tasks.fetch_add(1, std::memory_order_release);
 
     check::debug::n_assert(frame_state.groups[task_group].is_completed == false, "Trying to create a task from a completed group");
 
@@ -80,21 +80,23 @@ namespace neam::threading
     const group_t group = t.key;
     check::debug::n_assert(group < frame_state.groups.size(), "Trying to destroy a task from a task-group that does not exist");
     check::debug::n_assert(t.is_completed(), "Trying to destroy a task that wasn't completed");
-    check::debug::n_assert(t.get_frame_key() == frame_state.frame_key, "Trying to destroy a task that outlived its lifespan");
+
+    if (group != k_non_transient_task_group)
+    {
+      check::debug::n_assert(t.get_frame_key() == frame_state.frame_key, "Trying to destroy a task that outlived its lifespan");
+    }
 
     t.~task();
-    if (t.key == k_non_transient_task_group)
+    if (group == k_non_transient_task_group)
     {
-//     t.~task();
       std::lock_guard<TRACY_LOCKABLE_BASE(spinlock)> _lg(alloc_lock);
       non_transient_tasks.deallocate(&t);
     }
-//     else delete &t;
 
     const uint32_t orig_count = frame_state.groups[group].remaining_tasks.fetch_sub(1, std::memory_order_acquire);
-    check::debug::n_assert(orig_count > 0, "Invalid task count: Trying to decrement the task count when it was 0");
+    check::debug::n_assert(orig_count > 0, "Invalid task count: Trying to decrement the task count when it was 0 (task group: {})", group);
 
-    if (orig_count <= 1)
+    if (orig_count <= 1 && group != k_non_transient_task_group)
     {
       // increment the global state key as we are the last task pending for that group
       frame_state.global_state_key.fetch_add(1, std::memory_order_relaxed);
@@ -105,9 +107,11 @@ namespace neam::threading
   {
     check::debug::n_assert(t.unlock_is_completed() == false, "Trying to push an already completed task");
     check::debug::n_assert(t.unlock_is_waiting_to_run() == false, "Trying to push an already waiting task");
-    check::debug::n_assert(t.get_frame_key() == frame_state.frame_key, "Trying to push a task to run when that task has outlived its lifespan");
-    check::debug::n_assert(frame_state.groups[t.key].is_completed == false, "Trying to push a task to a completed group");
-
+    if (t.key != k_non_transient_task_group)
+    {
+      check::debug::n_assert(t.get_frame_key() == frame_state.frame_key, "Trying to push a task to run when that task has outlived its lifespan");
+      check::debug::n_assert(frame_state.groups[t.key].is_completed == false, "Trying to push a task to a completed group");
+    }
     // skip tasks that cannot run, as they will be added automatically
     // this check is necessary as this function can be called by a user
     if (!t.unlock_can_run()) return;
@@ -115,11 +119,9 @@ namespace neam::threading
     t.set_task_as_waiting_to_run();
 
     const uint32_t index = frame_state.groups[t.key].insert_buffer_index.fetch_add(1, std::memory_order_acquire);
-    bool is_inserted = frame_state.groups[t.key].tasks_to_run[index % group_info_t::k_task_to_run_size].push_back(&t);
-    check::debug::n_assert(is_inserted, "ring buffer overflow in the task_manager (group: {})", t.key);
 
-    // don't wake waiting thread when the task is not really usable
-    if (frame_state.groups[t.key].is_started.load(std::memory_order_seq_cst))
+    // don't wake waiting thread when the task is not really usable (group hasn't started yet)
+    if (t.key == k_non_transient_task_group || frame_state.groups[t.key].is_started.load(std::memory_order_seq_cst))
     {
       const uint32_t count = frame_state.tasks_that_can_run.fetch_add(1, std::memory_order_release);
       frame_state.tasks_that_can_run.notify_all();
@@ -130,6 +132,9 @@ namespace neam::threading
       // The lack of atomicity here is handled in the execute group (in advance())
       frame_state.groups[t.key].tasks_that_can_run.fetch_add(1, std::memory_order_seq_cst);
     }
+
+    bool is_inserted = frame_state.groups[t.key].tasks_to_run[index % group_info_t::k_task_to_run_size].push_back(&t);
+    check::debug::n_assert(is_inserted, "ring buffer overflow in the task_manager (group: {})", t.key);
   }
 
   void task_manager::add_compiled_frame_operations(resolved_graph&& _frame_ops)
@@ -151,6 +156,8 @@ namespace neam::threading
       max_group = std::max<uint32_t>(max_group, it.second);
     }
     frame_state.groups.resize(max_group + 1);
+
+    frame_state.groups[k_non_transient_task_group].is_started = true;
   }
 
   bool task_manager::advance()
@@ -334,10 +341,11 @@ namespace neam::threading
       if (group_it != k_non_transient_task_group)
       {
         if (group_info.is_completed.load(std::memory_order_acquire)
-            || !group_info.is_started.load(std::memory_order_acquire)
-            || group_info.remaining_tasks.load(std::memory_order_acquire) == 0)
+            || !group_info.is_started.load(std::memory_order_acquire))
           continue;
       }
+      if (group_info.remaining_tasks.load(std::memory_order_acquire) == 0)
+        continue;
 
       const uint32_t base_index = group_info.insert_buffer_index.load(std::memory_order_relaxed) + 2;
       for (uint32_t j = 0; j < group_info_t::k_task_to_run_size; ++j)
@@ -349,8 +357,17 @@ namespace neam::threading
           continue;
         check::debug::n_assert(ptr != nullptr, "Corrupted task data");
 
-        check::debug::n_assert(ptr->get_frame_key() == frame_state.frame_key, "Trying to run a task that has outlived its lifespan");
+        if (group_it != k_non_transient_task_group)
+        {
+          check::debug::n_assert(ptr->get_frame_key() == frame_state.frame_key, "Trying to run a task that has outlived its lifespan");
+        }
+
+        check::debug::n_assert(!ptr->is_completed(), "Invalid state: trying to execute a task that is already completed");
+        check::debug::n_assert(ptr->is_waiting_to_run(), "Invalid state: trying to execute a task that is not expecting to run");
+
         const uint32_t count = frame_state.tasks_that_can_run.fetch_sub(1, std::memory_order_release);
+        // not a fatal error per say, but may lead to very incorect behavior
+        check::debug::n_assert(count != 0, "Invalid state: tasks_that_can_run: underflow detected");
         TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)count);
         return ptr;
       }
