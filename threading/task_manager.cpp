@@ -121,7 +121,9 @@ namespace neam::threading
     const uint32_t index = frame_state.groups[t.key].insert_buffer_index.fetch_add(1, std::memory_order_acquire);
 
     // don't wake waiting thread when the task is not really usable (group hasn't started yet)
-    if (t.key == k_non_transient_task_group || frame_state.groups[t.key].is_started.load(std::memory_order_seq_cst))
+    if (t.key == k_non_transient_task_group
+        || frame_state.groups[t.key].will_start.load(std::memory_order_seq_cst)
+        || frame_state.groups[t.key].is_started.load(std::memory_order_seq_cst))
     {
       const uint32_t count = frame_state.tasks_that_can_run.fetch_add(1, std::memory_order_release);
       frame_state.tasks_that_can_run.notify_all();
@@ -288,15 +290,20 @@ namespace neam::threading
                   complexity += k_function_complexity;
                   group_info.start_group();
                 }
-                const bool was_started = group_info.is_started.exchange(true, std::memory_order_seq_cst);
-                check::debug::n_assert(!was_started, "Invalid frame operation: execute_task_group: task group was already started");
+
+                group_info.will_start.store(true, std::memory_order_seq_cst);
 
                 // we then wake all the threads
                 uint32_t tasks_to_run = group_info.tasks_that_can_run.load(std::memory_order_seq_cst);
                 while (!group_info.tasks_that_can_run.compare_exchange_strong(tasks_to_run, 0, std::memory_order_seq_cst));
 
                 frame_state.tasks_that_can_run.fetch_add(tasks_to_run, std::memory_order_release);
+
+                const bool was_started = group_info.is_started.exchange(true, std::memory_order_seq_cst);
+                check::debug::n_assert(!was_started, "Invalid frame operation: execute_task_group: task group was already started");
+
                 frame_state.tasks_that_can_run.notify_all();
+                group_info.will_start.store(false, std::memory_order_seq_cst);
 
                 ++chain.index;
 
@@ -367,6 +374,7 @@ namespace neam::threading
 
         const uint32_t count = frame_state.tasks_that_can_run.fetch_sub(1, std::memory_order_release);
         // not a fatal error per say, but may lead to very incorect behavior
+        // also, when that test is not present, there's a huge perf penalty
         check::debug::n_assert(count != 0, "Invalid state: tasks_that_can_run: underflow detected");
         TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)count);
         return ptr;

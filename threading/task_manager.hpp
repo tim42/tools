@@ -191,6 +191,7 @@ namespace neam::threading
         std::atomic<uint32_t> remaining_tasks = 0;
         std::atomic<bool> is_completed = false;
         std::atomic<bool> is_started = false;
+        std::atomic<bool> will_start = false;
 
         // held temporarily to avoid wasting cpu time spinning waiting for a group to start
         std::atomic<uint32_t> tasks_that_can_run = 0;
