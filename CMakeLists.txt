@@ -21,6 +21,10 @@ add_library(ntools
 # this is the proper way, but kdevelop does not like it
 #set_property(TARGET ntools PROPERTY CXX_STANDARD 23)
 
+if (${USE_TRACY})
+  message(STATUS "ntools: Profiling with Tracy enabled")
+  add_compile_definitions(TRACY_ENABLE=1)
+endif()
 
 if(MSVC)
   target_compile_options(ntools PRIVATE /W4 /WX /std:c++latest)

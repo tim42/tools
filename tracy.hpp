@@ -28,7 +28,7 @@
 
 /// \brief Conditional support for tracy
 
-#if __has_include(<tracy/Tracy.hpp>)
+#if __has_include(<tracy/Tracy.hpp>) && defined(TRACY_ENABLE) && TRACY_ENABLE
 #include <tracy/Tracy.hpp>
 #include <tracy/common/TracySystem.hpp>
 
