@@ -27,11 +27,13 @@ if (${USE_TRACY})
 endif()
 
 if(MSVC)
-  target_compile_options(ntools PRIVATE /W4 /WX /std:c++latest)
+  set(NTOOLS_FLAGS /W4 /WX /std:c++latest)
 else()
   # It has to be 2b or kdevelop refuses to parse .cpp files
-  target_compile_options(ntools PRIVATE -Wall -Wextra -std=gnu++2b)
+  set(NTOOLS_FLAGS -Wall -Wextra -std=gnu++2b)
 endif()
+
+target_compile_options(ntools PRIVATE ${NTOOLS_FLAGS})
 
 if (TARGET fmt)
     target_link_libraries(ntools fmt)
@@ -39,3 +41,16 @@ endif()
 
 
 target_include_directories(ntools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
+if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+  set(NTOOLS_MASTER_PROJECT ON)
+else()
+  set(NTOOLS_MASTER_PROJECT OFF)
+endif ()
+
+option(BUILD_NTOOLS_TESTS "Build ntools test executables" ${NTOOLS_MASTER_PROJECT})
+
+if (${BUILD_NTOOLS_TESTS})
+  message(STATUS "ntools: building test executables")
+  add_subdirectory(_tests/)
+endif()

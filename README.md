@@ -99,7 +99,7 @@ N_METADATA_STRUCT(global_options)
 int main(int argc, char **argv)
 {
   cmdline::parse cmd(argc, argv);
-  bool success;
+  bool success = false;
   global_options gbl_opt = cmd.process<global_options>(success);
 
   if (!success)
