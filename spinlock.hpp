@@ -78,11 +78,6 @@ namespace neam
       {
 #if N_ENABLE_LOCK_DEBUG
         check_for_key();
-        if (owner_id == std::this_thread::get_id())
-        {
-          printf("[spinlock: deadlock detected in try_lock()]\n");
-          abort();
-        }
         if (!lock_flag.test_and_set(std::memory_order_acquire))
         {
           owner_id = std::this_thread::get_id();
