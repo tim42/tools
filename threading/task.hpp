@@ -52,6 +52,7 @@ namespace neam::threading
 
       /// \brief Return if the task can run now (all the tasks it depends on are done)
       bool is_completed() const { std::lock_guard<spinlock> _lg(lock); return unlock_is_completed(); }
+      bool is_running() const { std::lock_guard<spinlock> _lg(lock); return unlock_is_running(); }
       bool is_waiting_to_run() const { std::lock_guard<spinlock> _lg(lock); return unlock_is_waiting_to_run(); }
       bool can_run() const { std::lock_guard<spinlock> _lg(lock); return unlock_can_run(); }
 
@@ -79,6 +80,7 @@ namespace neam::threading
           return;
         }
 
+        check::debug::n_assert(!unlock_is_running(), "Cannot add dependency when the task is already running");
         check::debug::n_assert(!unlock_is_completed(), "Cannot add dependency when the task is already completed");
         check::debug::n_assert(!unlock_is_waiting_to_run(), "Cannot add dependency on a task that is waiting to run");
 
@@ -113,6 +115,7 @@ namespace neam::threading
       }
 
       // unlocked version of the getters
+      bool unlock_is_running() const { return dependencies == k_running_marker; }
       bool unlock_is_completed() const { return dependencies == k_completed_marker; }
       bool unlock_is_waiting_to_run() const { return dependencies == k_is_slated_to_run_marker; }
       bool unlock_can_run() const { return dependencies == 0; }
@@ -127,10 +130,12 @@ namespace neam::threading
           check::debug::n_assert(unlock_is_waiting_to_run(), "task::run called on a task that isn't waiting to run (corruption ?)");
 
           // mark the task as completed:
-          dependencies = k_completed_marker;
+          dependencies = k_running_marker;
 
           // run:
           function();
+
+          dependencies = k_completed_marker;
 
           // notify dependent tasks:
           notify_dependent_tasks();
@@ -177,7 +182,8 @@ namespace neam::threading
 
     private:
       static constexpr uint32_t k_completed_marker = ~0u;
-      static constexpr uint32_t k_is_slated_to_run_marker = k_completed_marker - 1;
+      static constexpr uint32_t k_running_marker = k_completed_marker - 1;
+      static constexpr uint32_t k_is_slated_to_run_marker = k_running_marker - 1;
 
       // More than 4 billion queued tasks. (It's not the total dependency count, it's the still un-executed tasks)
       // If that limit is hit something is going very very wrong.

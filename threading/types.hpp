@@ -29,9 +29,14 @@
 #include <functional>
 #include <cstdint>
 
+// waiting for std::move_only_function to be availlable, here is a ~drop-in replacement
+#include "../async/internal_do_not_use_cpp23_replacement/function2.hpp"
+
+
 namespace neam::threading
 {
-  using function_t = std::function<void()>;
+//           std::move_only_function
+  using function_t = fu2::unique_function<void()>;
 
   using group_t = uint8_t;
   static constexpr group_t k_non_transient_task_group = 0;

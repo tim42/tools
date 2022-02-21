@@ -34,7 +34,6 @@
 #include "../frame_allocation.hpp"
 #include "../ring_buffer.hpp"
 #include "../spinlock.hpp"
-#include "../tracy.hpp"
 
 #include <chrono>
 #include <atomic>
@@ -73,20 +72,20 @@ namespace neam::threading
       }
 
 
-      void set_start_task_group_callback(group_t group, const std::function<void()>& fnc);
-      void set_start_task_group_callback(id_t id, const std::function<void()>& fnc)
+      void set_start_task_group_callback(group_t group, function_t&& fnc);
+      void set_start_task_group_callback(id_t id, function_t&& fnc)
       {
         const group_t group = get_group_id(id);
         check::debug::n_assert(group != 0xFF, "group name does not exists?");
-        set_start_task_group_callback(group, fnc);
+        set_start_task_group_callback(group, std::move(fnc));
       }
 
-      void set_end_task_group_callback(group_t group, const function_t& fnc);
-      void set_end_task_group_callback(id_t id, const function_t& fnc)
+      void set_end_task_group_callback(group_t group, function_t&& fnc);
+      void set_end_task_group_callback(id_t id, function_t&& fnc)
       {
         const group_t group = get_group_id(id);
         check::debug::n_assert(group != 0xFF, "group name does not exists?");
-        set_end_task_group_callback(group, fnc);
+        set_end_task_group_callback(group, std::move(fnc));
       }
 
     public: // task stuff
@@ -149,6 +148,17 @@ namespace neam::threading
       /// \return the actual elapsed duration (as mesured internally)
       std::chrono::microseconds run_tasks(std::chrono::microseconds duration);
 
+    public: // state stuff, must be called from within a task (or have a task in scope)
+            // WARNING: ALL THOSE FUNCTIONS MIGHT BREAK IF THERE ARE MULTIPLE TASK_MANAGERS
+
+      /// \brief Return the group of the task that is running on the current thread.
+      /// If no task is running, returns k_invalid_task_group
+      group_t get_current_group() const { return thread_state().current_gid; }
+
+      /// \brief Helper for get_task. Will run in the same task group as the current one.
+      /// Must be called from within a task
+      task_wrapper get_task(function_t&& func) { return get_task(get_current_group(), std::move(func)); }
+
     private:
       /// \brief Mark the setup of the task as complete and allow it to run (avoid race-conditions in the setup)
       /// \note Creating a task an not adding it will cause the task to never run (if it's a non-transient_tasks)
@@ -168,8 +178,10 @@ namespace neam::threading
 
       void reset_state();
 
+      static void do_run_task(task& task);
+
     private:
-      TRACY_LOCKABLE(spinlock, alloc_lock); // TODO: remove
+      spinlock alloc_lock;
 
       // Tasks that belong to a task group. Deletion is done at the end of the frame (no need to manually deallocate tasks this way)
       // Tasks allocated this way must have a task group and must run inside the frame it is allocated.
@@ -196,15 +208,15 @@ namespace neam::threading
         // held temporarily to avoid wasting cpu time spinning waiting for a group to start
         std::atomic<uint32_t> tasks_that_can_run = 0;
 
-        std::function<void()> start_group;
-        std::function<void()> end_group;
+        function_t start_group;
+        function_t end_group;
       };
 
       struct chain_info_t
       {
         bool ended = false;
         uint16_t index = 0;
-        TRACY_LOCKABLE(spinlock, lock);
+        spinlock lock;
       };
 
       struct frame_state_t
@@ -221,6 +233,17 @@ namespace neam::threading
         uint32_t frame_key = 0;
       };
       frame_state_t frame_state;
+
+      struct thread_state_t
+      {
+        group_t current_gid = k_invalid_task_group;
+      };
+
+      static thread_state_t& thread_state()
+      {
+        thread_local thread_state_t state;
+        return state;
+      }
 
       friend class task;
   };

@@ -31,7 +31,9 @@
 #pragma once
 #include "types.hpp"
 #include "task.hpp"
+#include "task_group_graph.hpp"
 #include "task_manager.hpp"
+#include "utilities.hpp"
 
 namespace neam
 {
