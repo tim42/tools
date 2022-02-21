@@ -98,10 +98,6 @@ namespace neam::async
           return *this;
         }
 
-        void lock() { if (state) state->lock.lock(); }
-        void unlock() { if (state) state->lock.unlock(); }
-        void trylock() { if (state) state->lock.trylock(); }
-
         // lock must be held:
         void drop() { if (state) state->release(); state = nullptr; }
 
@@ -124,7 +120,7 @@ namespace neam::async
 
           void complete(Args... args)
           {
-            std::lock_guard<shared_lock_t> _lg(lock);
+            std::lock_guard<spinlock> _lg(lock.state->lock);
 
             if (canceled)
               return;
@@ -163,7 +159,8 @@ namespace neam::async
 
           ~state()
           {
-            std::lock_guard<shared_lock_t> _lg(lock);
+            if (!lock.state) return;
+            std::lock_guard<spinlock> _lg(lock.state->lock);
             if (link)
             {
               link->link = nullptr;
@@ -180,9 +177,10 @@ namespace neam::async
           {
             if (&o == this) return *this;
 
+            if (lock.state)
             {
               // release current state:
-              std::lock_guard<shared_lock_t> _lg(lock);
+              std::lock_guard<spinlock> _lg(lock.state->lock);
               if (link)
               {
                 link->link = nullptr;
@@ -190,7 +188,9 @@ namespace neam::async
             }
 
             lock = o.lock;
-            std::lock_guard<shared_lock_t> _lg(lock);
+            if (!lock.state) return *this;
+
+            std::lock_guard<spinlock> _lg(lock.state->lock);
             o.lock.drop();
 
             canceled = o.canceled;
@@ -274,7 +274,7 @@ namespace neam::async
         using ret_type = typename std::result_of<Func(Args...)>::type;
         static_assert(std::is_same_v<ret_type, void>, "return type is not void");
 
-        std::lock_guard<shared_lock_t> _lg(lock);
+        std::lock_guard<spinlock> _lg(lock.state->lock);
         if (completed_args)
         {
 #if N_ASYNC_USE_TASK_MANAGER
@@ -314,6 +314,72 @@ namespace neam::async
       }
 #endif
 
+
+      void use_state(state&& other)
+      {
+        if (&other == link)
+          return;
+
+        {
+          std::lock_guard<spinlock> _lg(lock.state->lock);
+
+          // we are already completed, simply complete the state
+          if (completed_args)
+          {
+            // this handles the case where the other chain is alive or the callback has been set
+#if N_ASYNC_USE_TASK_MANAGER
+            call_with_completed_args(nullptr, threading::k_invalid_task_group, other);
+#else
+            call_with_completed_args(other);
+#endif
+            completed_args.reset();
+            return;
+          }
+        }
+        // else, we are not completed
+        {
+          check::debug::n_assert(link != nullptr, "Unable to chain the states as the state has been destructed without being completed");
+          check::debug::n_assert(link->on_completed == nullptr, "cannot call both then() and use_state()");
+          check::debug::n_assert(other.lock.state != nullptr, "invalid state to use");
+
+          {
+            std::lock_guard<spinlock> _olg(other.lock.state->lock);
+            std::lock_guard<spinlock> _lg(lock.state->lock);
+
+            // other state/chain are stale, no need to do anything
+            if (!other.on_completed && other.link == nullptr)
+              return;
+
+            state* target_state = link;
+            chain* target_chain = other.link;
+
+            // move the on_completed callback around, if it exists
+            if (other.on_completed)
+            {
+              target_state->on_completed = std::move(other.on_completed);
+#if N_ASYNC_USE_TASK_MANAGER
+              target_state->set_deferred_info(other.tm, other.group_id);
+#endif
+//               other.on_completed = nullptr;
+            }
+            // we go from chain{target}<->state{other} -> chain{this}<->state{target}
+            //       to   chain{target}               <->               state{target}
+            // and left chain{this} and state{other} be stale and un-completable
+
+            target_state->link = target_chain;
+            if (target_chain)
+            {
+              target_chain->link = target_state;
+              target_chain->lock = target_state->lock;
+            }
+
+            // unlink ourselves (and other)
+            other.link = nullptr;
+            link = nullptr;
+          }
+        }
+      }
+
       /// \brief Chain from a potentially not-contructed state
       /// This allows for flat (co_await style) code:
       ///   some_async_function(...)
@@ -351,10 +417,10 @@ namespace neam::async
           then_void(N_ASYNC_FWD_PARAMS [cb = std::move(cb), state = ret.create_state()] (Args... args) mutable
           {
             // link the states together/chains:
-            // FIXME: there was a use_state that would re-link states and chains here, but that was... problematic
-            //        with the multi-threaded test (memory corruption)
-            // This do work, but has a bit more overhead
-            cb(std::forward<Args>(args)...).then(std::move(state));
+            // we could use then() but the draw-back of then() is recursion.
+            // use_state does not perform any recursion and will instead flatten any recursive chains automatically
+            cb(std::forward<Args>(args)...).use_state(std::move(state));
+//             cb(std::forward<Args>(args)...).then(std::move(state));
           });
           return ret;
         }
@@ -401,7 +467,9 @@ namespace neam::async
 
       ~chain()
       {
-        std::lock_guard<shared_lock_t> _lg(lock);
+        if (!lock.state) return;
+
+        std::lock_guard<spinlock> _lg(lock.state->lock);
         if (link != nullptr)
         {
           link->link = nullptr;
@@ -417,16 +485,20 @@ namespace neam::async
       chain& operator = (chain&&o)
       {
         if (&o == this) return *this;
+
+        if (lock.state)
         {
           // release the state:
-          std::lock_guard<shared_lock_t> _lg(lock);
+          std::lock_guard<spinlock> _lg(lock.state->lock);
           if (link)
           {
             link->link = nullptr;
           }
         }
+
         lock = o.lock;
-        std::lock_guard<shared_lock_t> _lg(lock);
+        if (!lock.state) return *this;
+        std::lock_guard<spinlock> _lg(lock.state->lock);
         o.lock.drop();
         link = o.link;
         if (link)
