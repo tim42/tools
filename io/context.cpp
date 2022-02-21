@@ -64,23 +64,35 @@ namespace neam::io
   {
     // try to get a fd for the file if it is already open:
     int fd = -1;
-    {
-      if (const auto it = r_opened_files.find(fid); it != r_opened_files.end())
-        fd = it->second;
-      else if (const auto it = w_opened_files.find(fid); it != w_opened_files.end())
-        fd = it->second;
-    }
-
     struct stat st;
+    {
+      if (fd == -1)
+      {
+        std::lock_guard<spinlock> _prl(pending_reads_lock);
+        if (const auto it = r_opened_files.find(fid); it != r_opened_files.end())
+        {
+          fd = it->second;
+          if (check::unx::n_check_success(fstat(fd, &st)) < 0)
+            return 0;
+        }
+      }
 
-    // Found an existing fd:
-    if (fd >= 0)
-    {
-      if (check::unx::n_check_success(fstat(fd, &st)) < 0)
-        return 0;
+      if (fd == -1)
+      {
+        std::lock_guard<spinlock> _pwl(pending_writes_lock);
+        if (const auto it = w_opened_files.find(fid); it != w_opened_files.end())
+        {
+          fd = it->second;
+          if (check::unx::n_check_success(fstat(fd, &st)) < 0)
+            return 0;
+        }
+      }
     }
-    else // use stat in place of fstat
+
+    if (fd == -1) // use stat in place of fstat
     {
+      // FIXME: NOT THREADSAFE
+
       if (!is_file_mapped(fid))
       {
         check::debug::n_check(is_file_mapped(fid), "Failed to open {}: file not mapped", fid);
@@ -109,6 +121,10 @@ namespace neam::io
 
   void context::force_close_all_files()
   {
+    // read then write
+    std::lock_guard<spinlock> _prl(pending_reads_lock);
+    std::lock_guard<spinlock> _pwl(pending_writes_lock);
+
     neam::cr::out().debug("io::context: forcefully moving all opened files ({}) to the to-close list", r_opened_files.size() + w_opened_files.size());
     // move the opened lists to the to-close list
     for (auto& it : r_opened_files)
@@ -118,41 +134,58 @@ namespace neam::io
 
     // clear everything (and the to-close lists, as now everything is to be closed)
     r_opened_files.clear();
-    w_opened_files.clear();
     r_files_to_close.clear();
+    w_opened_files.clear();
     w_files_to_close.clear();
   }
 
   void context::clear_mapped_files()
   {
     force_close_all_files();
+    std::lock_guard<spinlock> _ml(mapped_lock);
     mapped_files.clear();
   }
 
 
   void context::process()
   {
-    if (in_process)
+    // Avoid both re-entering and concurrency on that function
+    if (!process_lock.try_lock())
       return;
-    const auto _sf = cr::scoped_flag(in_process, true); // FIXME: not thread-safe, but hey, it's re-entrant safe
+    std::lock_guard<spinlock> _ipl(process_lock, std::adopt_lock);
 
     process_completed_queries();
 
     // we queue the close() calls:
-    if (!queue_close_operations(opened_files_to_be_closed))
-      return; // failed to perform the close operations, submit queue is full
+    {
+      std::lock_guard<spinlock> _pcl(pending_close_lock);
+      if (!queue_close_operations(opened_files_to_be_closed))
+        return; // failed to perform the close operations, submit queue is full
+    }
 
     // It may call process_completed_queries() when needed
-    if (!queue_close_operations(r_files_to_close, r_opened_files))
-      return; // failed to perform the close operations, submit queue is full
-    if (!queue_close_operations(w_files_to_close, w_opened_files))
-      return; // failed to perform the close operations, submit queue is full
+    {
+      std::lock_guard<spinlock> _prl(pending_reads_lock);
+      if (!queue_close_operations(r_files_to_close, r_opened_files))
+        return; // failed to perform the close operations, submit queue is full
+    }
+    {
+      std::lock_guard<spinlock> _pwl(pending_writes_lock);
+      if (!queue_close_operations(w_files_to_close, w_opened_files))
+        return; // failed to perform the close operations, submit queue is full
+    }
 
     // we move all the opened files to the to_close list, so that next time we attempt to close them too
-    for (const auto& it : r_opened_files)
-      r_files_to_close.emplace(it.first);
-    for (const auto& it : w_opened_files)
-      w_files_to_close.emplace(it.first);
+    {
+      std::lock_guard<spinlock> _prl(pending_reads_lock);
+      for (const auto& it : r_opened_files)
+        r_files_to_close.emplace(it.first);
+    }
+    {
+      std::lock_guard<spinlock> _pwl(pending_writes_lock);
+      for (const auto& it : w_opened_files)
+        w_files_to_close.emplace(it.first);
+    }
 
     // remove the close queries from the results:
     // (close queries are completed inline)
@@ -164,9 +197,9 @@ namespace neam::io
 
   void context::process_completed_queries()
   {
-    if (in_completion)
+    if (!completion_lock.try_lock())
       return;
-    const auto _sf = cr::scoped_flag(in_completion, true); // FIXME: not thread-safe, but hey, it's re-entrant safe
+    std::lock_guard<spinlock> _cl(completion_lock, std::adopt_lock);
 
     // batch process the completion queue:
     io_uring_cqe* cqes[queue_depth];
@@ -181,9 +214,9 @@ namespace neam::io
 
   void context::_wait_for_submit_queries()
   {
-    if (in_completion)
+    if (!completion_lock.try_lock())
       return;
-    const auto _sf = cr::scoped_flag(in_completion, true); // FIXME: not thread-safe, but hey, it's re-entrant safe
+    std::lock_guard<spinlock> _cl(completion_lock, std::adopt_lock);
 
     // Send the remaining queries
     process();
@@ -191,6 +224,7 @@ namespace neam::io
     if (has_remaining_operations())
       cr::out().debug("_wait_for_submit_queries: waiting for {} read and {} write queries", submit_read_queries, submit_write_queries);
 
+    unsigned count = 0;
     // wat for everything to be done
     while (has_remaining_operations())
     {
@@ -198,9 +232,13 @@ namespace neam::io
       check::unx::n_check_success(io_uring_wait_cqe(&ring, &cqe));
       process_completed_query(cqe);
 
+      ++count;
+
       // Just in case the callback added new stuff to process:
       process();
     }
+    if (count > 0)
+      cr::out().debug("_wait_for_submit_queries: processed a total of {} queries", count);
   }
 
   context::query::~query()
@@ -277,6 +315,7 @@ namespace neam::io
     }
     else
     {
+      // FIXME: can have race conditions:
       if (!is_file_mapped(fid))
       {
         check::debug::n_check(is_file_mapped(fid), "Failed to open {}: file not mapped", fid);
@@ -368,15 +407,15 @@ namespace neam::io
 
   bool context::queue_close_operations(std::unordered_set<id_t>& files_to_close, std::unordered_map<id_t, int>& opened_files)
   {
-    if (files_to_close.size() > 0)
-      cr::out().debug("queue_close_operations: {} pending close operations", files_to_close.size());
+//     if (files_to_close.size() > 0)
+//       cr::out().debug("queue_close_operations: {} pending close operations", files_to_close.size());
 
     bool has_done_any_delete = false;
     while (files_to_close.size() > 0)
     {
       const id_t fid = *files_to_close.begin();
       const auto opened_files_it = opened_files.find(fid);
-      check::debug::n_assert(opened_files_it != opened_files.end(), "io::context::process: file in the to-close list isn't in the opened list");
+//       check::debug::n_assert(opened_files_it != opened_files.end(), "io::context::process: file in the to-close list isn't in the opened list");
       const int fd = opened_files_it->second;
 
       // Get a SQE
@@ -397,156 +436,198 @@ namespace neam::io
 
   void context::queue_readv_operations()
   {
-    if (pending_reads.empty())
-      return;
-    cr::out().debug("queue_readv_operations: {} pending read operations", pending_reads.size());
-    // sort reads by fid, so we have reads for the same file at the same place (better for readv)
-    std::sort(pending_reads.begin(), pending_reads.end(), [](const read_request& a, const read_request& b)
+    // so we can call the failed states outside the read lock
+    std::vector<read_chain::state> failed_states;
+
     {
-      if (a.fid == b.fid)
-        return a.offset < b.offset;
-      return std::to_underlying(a.fid) < std::to_underlying(b.fid);
-    });
-
-    bool has_done_any_read = false;
-
-    while (pending_reads.size() > 0)
-    {
-      const id_t fid = pending_reads.front().fid;
-
-      // check if the file is opened, else open it:
-      int fd = open_file(fid, O_RDONLY, r_opened_files);
-      if (fd < 0)
+      std::lock_guard<spinlock> _prl(pending_reads_lock);
+      if (pending_reads.empty())
+        return;
+      //cr::out().debug("queue_readv_operations: {} pending read operations", pending_reads.size());
+      // sort reads by fid, so we have reads for the same file at the same place (better for readv)
+      std::sort(pending_reads.begin(), pending_reads.end(), [](const read_request& a, const read_request& b)
       {
-        // fail all the queries for the same fid:
-        while (!pending_reads.empty() && fid == pending_reads.front().fid)
+        if (a.fid == b.fid)
+          return a.offset < b.offset;
+        return std::to_underlying(a.fid) < std::to_underlying(b.fid);
+      });
+
+      bool has_done_any_read = false;
+
+      while (pending_reads.size() > 0)
+      {
+        const id_t fid = pending_reads.front().fid;
+
+        // check if the file is opened, else open it:
+        int fd = open_file(fid, O_RDONLY, r_opened_files);
+        if (fd < 0)
         {
-          pending_reads.front().state.complete({raw_data::unique_ptr(), 0}, false);
+          // fail all the queries for the same fid:
+          while (!pending_reads.empty() && fid == pending_reads.front().fid)
+          {
+            failed_states.emplace_back(std::move(pending_reads.front().state));
+            pending_reads.pop_front();
+          }
+
+          continue;
+        }
+
+        r_files_to_close.erase(fid);
+
+        // Get a SQE
+        io_uring_sqe* const sqe = get_sqe(has_done_any_read);
+        if (!sqe)
+          return;
+        has_done_any_read = true;
+
+        // Count the queries for the same file w/ contiguous queries:
+        unsigned iovec_count = 1;
+        {
+          size_t offset = pending_reads.front().offset + pending_reads.front().size;
+          for (; iovec_count < pending_reads.size(); ++iovec_count)
+          {
+            if (fid != pending_reads[iovec_count].fid)
+              break;
+            if (offset != pending_reads[iovec_count].offset)
+              break;
+            offset += pending_reads[iovec_count].size;
+          }
+        }
+
+        // Allocate + fill the query structure:
+        query* q = query::allocate(fid, query::type_t::read, iovec_count);
+        const size_t offset = pending_reads.front().offset;
+
+        for (unsigned i = 0; i < iovec_count; ++i)
+        {
+          q->iovecs[i].iov_len = pending_reads.front().size;
+          q->iovecs[i].iov_base = operator new(pending_reads.front().size);
+          q->read_states[i] = std::move(pending_reads.front().state);
+
+          memset(q->iovecs[i].iov_base, 0, pending_reads.front().size); // so valgrind is happy, can be skipped
+
           pending_reads.pop_front();
         }
 
-        continue;
+        io_uring_prep_readv(sqe, fd, q->iovecs, iovec_count, offset);
+        io_uring_sqe_set_data(sqe, q);
+
+        check::unx::n_check_success(io_uring_submit(&ring));
+        ++submit_read_queries;
       }
+    } // lock scope
 
-      r_files_to_close.erase(fid);
-
-      // Get a SQE
-      io_uring_sqe* const sqe = get_sqe(has_done_any_read);
-      if (!sqe)
-        return;
-      has_done_any_read = true;
-
-      // Count the queries for the same file w/ contiguous queries:
-      unsigned iovec_count = 1;
-      {
-        size_t offset = pending_reads.front().offset + pending_reads.front().size;
-        for (; iovec_count < pending_reads.size(); ++iovec_count)
-        {
-          if (fid != pending_reads[iovec_count].fid)
-            break;
-          if (offset != pending_reads[iovec_count].offset)
-            break;
-          offset += pending_reads[iovec_count].size;
-        }
-      }
-
-      // Allocate + fill the query structure:
-      query* q = query::allocate(fid, query::type_t::read, iovec_count);
-      const size_t offset = pending_reads.front().offset;
-
-      for (unsigned i = 0; i < iovec_count; ++i)
-      {
-        q->iovecs[i].iov_len = pending_reads.front().size;
-        q->iovecs[i].iov_base = operator new(pending_reads.front().size);
-        q->read_states[i] = std::move(pending_reads.front().state);
-
-        memset(q->iovecs[i].iov_base, 0, pending_reads.front().size); // so valgrind is happy, can be skipped
-
-        pending_reads.pop_front();
-      }
-
-      io_uring_prep_readv(sqe, fd, q->iovecs, iovec_count, offset);
-      io_uring_sqe_set_data(sqe, q);
-
-      check::unx::n_check_success(io_uring_submit(&ring));
-      ++submit_read_queries;
+    // complete the failed states outside the readlock so that they can queue read operations
+    for (auto& state : failed_states)
+    {
+      state.complete({raw_data::unique_ptr(), 0}, false);
     }
   }
 
   void context::queue_writev_operations()
   {
-    if (pending_writes.empty())
-      return;
-    cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
+    // so we can call the failed states outside the write lock
+    std::vector<write_chain::state> failed_states;
 
-    // sort reads by fid, so we have reads for the same file at the same place (better for readv)
-    std::sort(pending_writes.begin(), pending_writes.end(), [](const write_request& a, const write_request& b)
     {
-      if (a.fid == b.fid)
-        return a.offset < b.offset;
-      return std::to_underlying(a.fid) < std::to_underlying(b.fid);
-    });
+      std::lock_guard<spinlock> _pwl(pending_writes_lock);
+      if (pending_writes.empty())
+        return;
+      //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
 
-    bool has_done_any_writes = false;
-
-    while (pending_writes.size() > 0)
-    {
-      const id_t fid = pending_writes.front().fid;
-
-      // check if the file is opened, else open it:
-      int fd = open_file(fid, O_WRONLY|O_CREAT|O_TRUNC, w_opened_files);
-      if (fd < 0)
+      // sort reads by fid, so we have reads for the same file at the same place (better for readv)
+      std::sort(pending_writes.begin(), pending_writes.end(), [](const write_request& a, const write_request& b)
       {
-        // fail all the queries for the same fid:
-        while (!pending_writes.empty() && fid == pending_writes.front().fid)
+        if (a.fid == b.fid)
+          return a.offset < b.offset;
+        return std::to_underlying(a.fid) < std::to_underlying(b.fid);
+      });
+
+      bool has_done_any_writes = false;
+
+      while (pending_writes.size() > 0)
+      {
+        const id_t fid = pending_writes.front().fid;
+
+        // check if the file is opened, else open it:
+        int flags = O_WRONLY|O_CREAT;
+        if (pending_writes.front().offset == 0)
+          flags |= O_TRUNC;
+
+        int fd = open_file(fid, flags, w_opened_files);
+        if (fd < 0)
         {
-          pending_writes.front().state.complete(false);
+          // fail all the queries for the same fid:
+          while (!pending_writes.empty() && fid == pending_writes.front().fid)
+          {
+            failed_states.emplace_back(std::move(pending_writes.front().state));
+            pending_writes.pop_front();
+          }
+
+          continue;
+        }
+
+        w_files_to_close.erase(fid);
+
+        // Get a SQE
+        io_uring_sqe* const sqe = get_sqe(has_done_any_writes);
+        if (!sqe)
+          return;
+
+        has_done_any_writes = true;
+
+        // Count the queries for the same file w/ contiguous queries:
+        unsigned iovec_count = 1;
+        {
+          const bool append = pending_writes.front().offset == append;
+          size_t offset = pending_writes.front().offset + pending_writes.front().data.size;
+          for (; iovec_count < pending_writes.size(); ++iovec_count)
+          {
+            if (fid != pending_writes[iovec_count].fid)
+              break;
+            if (!append)
+            {
+              if (offset != pending_writes[iovec_count].offset)
+                break;
+              if (pending_writes[iovec_count].offset == append)
+                break;
+              offset += pending_writes[iovec_count].data.size;
+            }
+            else
+            {
+              if (pending_writes[iovec_count].offset != append)
+                break;
+            }
+          }
+        }
+
+        // Allocate + fill the query structure:
+        query* q = query::allocate(fid, query::type_t::write, iovec_count);
+        const size_t offset = pending_writes.front().offset;
+
+        for (unsigned i = 0; i < iovec_count; ++i)
+        {
+          q->iovecs[i].iov_len = pending_writes.front().data.size;
+          q->iovecs[i].iov_base = pending_writes.front().data.data.release();
+          q->write_states[i] = std::move(pending_writes.front().state);
           pending_writes.pop_front();
         }
 
-        continue;
+        io_uring_prep_writev(sqe, fd, q->iovecs, iovec_count, offset);
+        // add the append flags if necessary
+        if (offset == append)
+          sqe->rw_flags |= RWF_APPEND;
+        io_uring_sqe_set_data(sqe, q);
+
+        check::unx::n_check_success(io_uring_submit(&ring));
+        ++submit_write_queries;
       }
+    } // lock scope
 
-      w_files_to_close.erase(fid);
-
-      // Get a SQE
-      io_uring_sqe* const sqe = get_sqe(has_done_any_writes);
-      if (!sqe)
-        return;
-
-      has_done_any_writes = true;
-
-      // Count the queries for the same file w/ contiguous queries:
-      unsigned iovec_count = 1;
-      {
-        size_t offset = pending_writes.front().offset + pending_writes.front().data.size;
-        for (; iovec_count < pending_writes.size(); ++iovec_count)
-        {
-          if (fid != pending_writes[iovec_count].fid)
-            break;
-          if (offset != pending_writes[iovec_count].offset)
-            break;
-          offset += pending_writes[iovec_count].data.size;
-        }
-      }
-
-      // Allocate + fill the query structure:
-      query* q = query::allocate(fid, query::type_t::write, iovec_count);
-      const size_t offset = pending_writes.front().offset;
-
-      for (unsigned i = 0; i < iovec_count; ++i)
-      {
-        q->iovecs[i].iov_len = pending_writes.front().data.size;
-        q->iovecs[i].iov_base = pending_writes.front().data.data.release();
-        q->write_states[i] = std::move(pending_writes.front().state);
-        pending_writes.pop_front();
-      }
-
-      io_uring_prep_writev(sqe, fd, q->iovecs, iovec_count, offset);
-      io_uring_sqe_set_data(sqe, q);
-
-      check::unx::n_check_success(io_uring_submit(&ring));
-      ++submit_write_queries;
+    // complete the failed states outside the readlock so that they can queue read operations
+    for (auto& state : failed_states)
+    {
+      state.complete(false);
     }
   }
 

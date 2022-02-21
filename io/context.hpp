@@ -26,6 +26,10 @@
 
 #pragma once
 
+// must be before liburing.h, otherwise there's some weird compilation errors
+#include "../tracy.hpp"
+
+
 #include <liburing.h>
 
 #include <deque>
@@ -39,13 +43,16 @@
 #include "../id/string_id.hpp"
 #include "../id/id.hpp"
 
-#include "../async/chain.hpp"
+#include "../async/async.hpp"
 #include "../raw_data.hpp"
+#include "../spinlock.hpp"
 
 namespace neam::io
 {
   /// \brief manage file access. Mostly optimized for reads.
-  /// \todo Dispatch callbacks on a threadpool
+  /// \warning only one thread should ever call process, process_completed_queries AND _wait_for_submit_queries
+  ///
+  /// FIXME: The flag handling is a mess.
   class context
   {
     private:
@@ -55,10 +62,37 @@ namespace neam::io
       using write_chain = async::chain<bool /*success*/>;
 
       static constexpr size_t whole_file = ~uint64_t(0);
+      static constexpr size_t append = ~uint64_t(0); // for writes only, indicate we want to append
 
-      explicit context(const unsigned _queue_depth = 8);
+      explicit context(const unsigned _queue_depth = 32);
 
       ~context();
+
+      /// \brief Tweak some of the behavior to avoid bad cases in multi-threaded contexts.
+      /// \note if true, process() will have to be manually called (see the warning on the class comment)
+      void is_used_across_threads(bool multithreaded)
+      {
+        is_called_on_multiple_threads = multithreaded;
+      }
+
+#if N_ASYNC_USE_TASK_MANAGER
+      /// \brief User-provided callbacks will be called using the task manager if set by the user
+      ///        If unset, they will be called in the context of the function
+      void set_deferred_execution_to_user_default()
+      {
+        task_manager = nullptr;
+        group_id = threading::k_invalid_task_group;
+      }
+
+      /// \brief Force deferred execution on another thread. If the chain is already deferred, it will not change the provided info
+      ///        But for tasks without deferred execution, those settings will be used.
+      /// \note This only applies to chains whose function is set. For the others, the callback will be called when they are set.
+      void force_deferred_execution(threading::task_manager* tm, threading::group_t id)
+      {
+        task_manager = tm;
+        group_id = id;
+      }
+#endif
 
       const std::string& get_prefix_directory() const { return prefix_directory; }
       void set_prefix_directory(std::string prefix)
@@ -77,6 +111,7 @@ namespace neam::io
         id_t fid = get_file_id(path);
         std::string filename = fmt::format("{}{}{}", prefix_directory, (prefix_directory.empty() ? "" : "/"), path);
 
+        std::lock_guard<spinlock> _ml(mapped_lock);
         mapped_files.insert_or_assign(fid, std::move(filename));
         return fid;
       }
@@ -85,6 +120,7 @@ namespace neam::io
       {
         id_t fid = get_file_id(path);
 
+        std::lock_guard<spinlock> _ml(mapped_lock);
         mapped_files.insert_or_assign(fid, std::move(path));
         return fid;
       }
@@ -96,6 +132,7 @@ namespace neam::io
 
       void unmap_file(id_t fid)
       {
+        std::lock_guard<spinlock> _ml(mapped_lock);
         mapped_files.erase(fid);
       }
 
@@ -114,6 +151,8 @@ namespace neam::io
           return false;
         if (fid == id_t::none)
           return false;
+
+        std::lock_guard<spinlock> _ml(mapped_lock);
         if (auto it = mapped_files.find(fid); it != mapped_files.end())
           return true;
         return false;
@@ -125,7 +164,7 @@ namespace neam::io
       /// \brief queue a read operation
       /// \param do_not_call_process should only be set to true when you follow the current call by another queue_read on the same file (for stuff like chunked-readig)
       /// \note may trigger a process if the waiting queue becomes too long
-      /// \warning order of reads is not guranteed unless reads are on contiguous chunks of data
+      /// \warning order of reads is not guaranteed unless reads are on contiguous chunks of data
       ///          (contiguous: offset + size = next_read_offset)
       ///          (in this case the order will be from the lowest offset to the highest one, not the submission order)
       read_chain queue_read(id_t fid, size_t offset, size_t size, bool do_not_call_process = false)
@@ -136,51 +175,56 @@ namespace neam::io
           size = get_file_size(fid);
 
         read_chain ret;
-        pending_reads.push_back({fid, offset, size, ret.create_state()});
-
-        r_files_to_open.emplace(fid);
-        r_files_to_close.erase(fid);
-
-        if (!do_not_call_process && pending_reads.size() >= max_pending_queue_size)
+        size_t pending_size = 0;
         {
-          if (!in_process)
-          {
-            neam::cr::out().debug("io::context::process() triggered by a queue_read: {} pending reads", pending_reads.size());
-            process();
-          }
+          std::lock_guard<spinlock> _prl(pending_reads_lock);
+          pending_reads.push_back({fid, offset, size, ret.create_state()});
+          pending_size = pending_reads.size();
+
+          r_files_to_open.emplace(fid);
+          r_files_to_close.erase(fid);
+        }
+        if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
+        {
+          process();
         }
         return ret;
       }
 
-      /// \brief queue a read operation
-      /// \param do_not_call_process should only be set to true when you follow the current call by another queue_read on the same file (for stuff like chunked-readig)
+      /// \brief queue a write operation
+      /// \param do_not_call_process should only be set to true when you follow the current call by another queue_write on the same file (for stuff like chunked-readig)
+      /// \note an offset of 0 will truncate the file if it isn't already opened)
       /// \note may trigger a process if the waiting queue becomes too long
-      /// \warning order of reads is not guranteed unless reads are on contiguous chunks of data
-      ///          (contiguous: offset + size = next_read_offset)
+      /// \warning order of writes are not guranteed unless writes are on contiguous chunks of data
+      ///          (contiguous: offset + data.size = next_write_offset)
       ///          (in this case the order will be from the lowest offset to the highest one, not the submission order)
       write_chain queue_write(id_t fid, size_t offset, raw_data&& data, bool do_not_call_process = false)
       {
         check::debug::n_assert(data.size > 0, "Writes of size 0 are invalid");
 
         write_chain ret;
-        pending_writes.push_back({fid, offset, std::move(data), ret.create_state()});
-
-        w_files_to_open.emplace(fid);
-        w_files_to_close.erase(fid);
-
-        if (!do_not_call_process && pending_writes.size() >= max_pending_queue_size)
+        size_t pending_size = 0;
         {
-          if (!in_process)
-          {
-            neam::cr::out().debug("io::context::process() triggered by a queue_write: {} pending writes", pending_writes.size());
-            process();
-          }
+          std::lock_guard<spinlock> _pwl(pending_writes_lock);
+          pending_writes.push_back({fid, offset, std::move(data), ret.create_state()});
+          pending_size = pending_writes.size();
+
+          w_files_to_open.emplace(fid);
+          w_files_to_close.erase(fid);
+        }
+
+        if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
+        {
+          process();
         }
         return ret;
       }
 
       bool has_remaining_operations() const
       {
+        // read then write
+        std::lock_guard<spinlock> _prl(pending_reads_lock);
+        std::lock_guard<spinlock> _pwl(pending_writes_lock);
         return submit_read_queries != 0 || submit_write_queries != 0;
       }
 
@@ -205,6 +249,7 @@ namespace neam::io
           return "id:invalid";
         if (fid == id_t::none)
           return "id:none";
+        std::lock_guard<spinlock> _ml(mapped_lock);
         if (auto it = mapped_files.find(fid); it != mapped_files.end())
           return it->second;
         return "id:not-a-mapped-file";
@@ -216,6 +261,7 @@ namespace neam::io
           return nullptr;
         if (fid == id_t::none)
           return nullptr;
+        std::lock_guard<spinlock> _ml(mapped_lock);
         if (auto it = mapped_files.find(fid); it != mapped_files.end())
           return it->second.c_str();
         return nullptr;
@@ -291,26 +337,37 @@ namespace neam::io
       std::string prefix_directory;
 
       // avoid re-entering in stuff we should never re-enter:
-      std::atomic<bool> in_process;
-      std::atomic<bool> in_completion;
+      spinlock process_lock;
+      spinlock completion_lock;
 
+      mutable spinlock mapped_lock;
       std::unordered_map<id_t, std::string> mapped_files;
 
+      mutable spinlock pending_reads_lock;
       std::deque<read_request> pending_reads;
       std::unordered_map<id_t, int> r_opened_files;
       std::unordered_set<id_t> r_files_to_open;
       std::unordered_set<id_t> r_files_to_close;
       unsigned submit_read_queries = 0;
 
+      mutable spinlock pending_writes_lock;
       std::deque<write_request> pending_writes;
       std::unordered_map<id_t, int> w_opened_files;
       std::unordered_set<id_t> w_files_to_open;
       std::unordered_set<id_t> w_files_to_close;
       unsigned submit_write_queries = 0;
 
+      mutable spinlock pending_close_lock;
       std::unordered_set<int> opened_files_to_be_closed; // list of fd to close
 
       unsigned last_process_pending_read_size = 0;
-      static constexpr unsigned max_pending_queue_size = 20; // above this, it will trigger a process call()
+      static constexpr unsigned k_max_pending_queue_size = 20; // above this, it will trigger a process call()
+
+      bool is_called_on_multiple_threads = true;
+
+#if N_ASYNC_USE_TASK_MANAGER
+      threading::task_manager* task_manager = nullptr;
+      threading::group_t group_id = threading::k_invalid_task_group;
+#endif
   };
 }
