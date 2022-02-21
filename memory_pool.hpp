@@ -56,7 +56,7 @@ namespace neam
         struct chunk;
 
         // free memory
-        struct alignas(8) allocation_slot
+        struct alignas(alignof(ObjectType) < 8 ? 8 : alignof(ObjectType)) allocation_slot
         {
           union
           {
@@ -78,7 +78,7 @@ namespace neam
           void set_chunk(chunk* chk) { chunk_data |= reinterpret_cast<uint64_t>(chk) & ~1; }
         };
 
-        static_assert(alignof(allocation_slot) == 8, "Invalid object type: requested alignment greater than 8");
+        //static_assert(alignof(allocation_slot) == 8, "Invalid object type: requested alignment greater than 8");
 
         struct chunk
         {
