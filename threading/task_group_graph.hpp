@@ -142,7 +142,7 @@ namespace neam::threading
 }
 
 // So we can serialize the IR (and store it as an asset)
-#include <ntools/struct_metadata/struct_metadata.hpp>
+#include "../struct_metadata/struct_metadata.hpp"
 
 N_METADATA_STRUCT(neam::threading::ir_opcode)
 {

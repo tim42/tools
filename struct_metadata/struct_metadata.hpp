@@ -27,8 +27,8 @@
 #pragma once
 
 #include <type_traits>
-#include <ntools/ct_string.hpp>
-#include <ntools/ct_list.hpp>
+#include "../ct_string.hpp"
+#include "../ct_list.hpp"
 
 #define N_METADATA_STRUCT(Struct) template<> struct n_metadata_member_definitions<Struct> : public ::neam::metadata::internal::member_definition_base<Struct>
 

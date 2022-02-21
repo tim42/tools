@@ -41,6 +41,15 @@ namespace neam
     /// \brief Allocates and setup a raw_data
     static raw_data allocate(size_t size) { return { unique_ptr(operator new(size)), size }; }
 
+    /// \brief Copy a contiguous container (must have a .size() and a .data()) to a new raw_data
+    template<typename ContinuousContainer>
+    static raw_data allocate_from(const ContinuousContainer& c)
+    {
+      raw_data ret = allocate(c.size() * sizeof(typename ContinuousContainer::value_type));
+      memcpy(ret.data.get(), c.data(), ret.size);
+      return ret;
+    }
+
     /// \brief duplicate the raw data / its allocation.
     /// Explicit (no operator = ) so as to avoid mistakenly duplicating this stuff
     static raw_data duplicate(const raw_data& other)
