@@ -26,6 +26,9 @@
 
 #pragma once
 
+#include "chain.hpp"
+#include "multi_chain.hpp"
+
 namespace neam::async
 {
 }
