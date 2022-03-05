@@ -11,7 +11,7 @@
 #include "../chrono.hpp"
 
 constexpr size_t frame_count = 1000000;
-constexpr size_t thread_count = 7;
+constexpr size_t thread_count = 8;
 
 
 using namespace neam;
@@ -67,7 +67,8 @@ mo_chain recurse(threading::task_manager& tm, move_only_thingy&& o, bool second_
     auto i = o.i + 1;
     if (!second_branch)
     {
-      recurse(tm, {i}, false).then([ o = std::move(o), st = std::move(st)](move_only_thingy&&) mutable
+      recurse(tm, {i}, false)
+      .then([ o = std::move(o), st = std::move(st)](move_only_thingy&&) mutable
       {
         st.complete(std::move(o));
       });
@@ -142,6 +143,10 @@ int main(int, char**)
   {
     ++frame_index;
     static unsigned old_pct = 0;
+    static double last_dt = 0;
+    static unsigned frame_count_since_last_print = 0;
+
+
     unsigned pct = (frame_index * 100 / frame_count);
 
     const double dt = chr.get_accumulated_time();
@@ -153,10 +158,16 @@ int main(int, char**)
 
       neam::cr::out().log(" progress: {}% | [{} frames | {:.6}ms/frame]", pct, frame_index, ms_frame);
     }
-    if (frame_index % 100 == 0)
+    if (last_dt + 2 <= dt) // log every seconds
     {
-      neam::cr::out().debug(" progress: {}% | [{} frames | {:.6}ms/frame]", pct, frame_index, ms_frame);
+      const double ddt = dt - last_dt;
+      const double imm_ms_frame = ddt * 1000 / frame_count_since_last_print;
+      last_dt = dt;
+      frame_count_since_last_print = 0;
+      neam::cr::out().debug(" progress: {}% | [{} frames | {:.6}ms/frame]", pct, frame_index, imm_ms_frame);
     }
+
+    ++frame_count_since_last_print;
   });
 
   // run a simple for-each over a large collection of element:
@@ -175,13 +186,13 @@ int main(int, char**)
         });
         threading::task& init_b = *tm.get_task([&]
         {
-          out_data.resize(16 * 1024);
+          out_data.resize(32 * 1024);
         });
 
         tm.actively_wait_for(init_a);
         tm.actively_wait_for(init_b);
       }
-return;
+
       // init the array:
       const threading::group_t gid = tm.get_current_group();
       threading::for_each(tm, gid, src_array, [](uint32_t& e, size_t idx)
