@@ -69,7 +69,7 @@ namespace neam
         {
           if (try_lock())
             return;
-          while (lock_flag.test(std::memory_order_relaxed));
+          while (_relaxed_test());
         }
       }
 
@@ -132,6 +132,11 @@ namespace neam
         check_for_key();
 #endif
         return lock_flag.test(std::memory_order_acquire);
+      }
+
+      bool _relaxed_test() const
+      {
+        return lock_flag.test(std::memory_order_relaxed);
       }
 
     private:
