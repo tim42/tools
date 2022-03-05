@@ -28,13 +28,18 @@ struct move_only_thingy
   int i = -1;
 };
 
-move_only_thingy my_function(move_only_thingy v)
+using mo_chain = async::chain < move_only_thingy && >;
+using moc_chain = async::chain < move_only_thingy &&, size_t& >;
+
+mo_chain my_function(move_only_thingy v)
+{
+  return mo_chain::create_and_complete({ v.i + 1 });
+}
+move_only_thingy my_function_2(move_only_thingy v)
 {
   return { v.i + 1 };
 }
 
-using mo_chain = async::chain < move_only_thingy && >;
-using moc_chain = async::chain < move_only_thingy &&, size_t& >;
 
 moc_chain recurse(move_only_thingy&& o, size_t& counter, bool second_branch)
 {
@@ -82,9 +87,12 @@ int main(int, char**)
   mo_chain ch;
   mo_chain::state st = ch.create_state();
 
-  auto cont = ch.then(my_function)
+  // st.complete({0});
+
+  // there's no difference between returning a chain and returning the value directly
+  auto cont = ch.then(my_function_2)
     .then(my_function)
-    .then(my_function);
+    .then(my_function_2);
 
   st.complete({0});
 
