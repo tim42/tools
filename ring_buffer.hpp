@@ -50,25 +50,19 @@ namespace neam::cr
       bool push_back(Type t)
       {
         std::lock_guard<spinlock> _lg(lock);
-        uint32_t rh = get_head(read_head);
-        const uint32_t wh = get_head(write_head);
+        return unlocked_push_back(t);
+      }
 
-        // just to normalize the check below
-        if (rh < wh)
-          rh += Size;
-
-        // no data: if we have one space left, we cannot store data
-        // as rh == wh is the empty buffer
-        if (rh - wh == 1 || entry_count == (Size - 2))
+      /// \brief try to lock the ring buffer an pop the front. If it fails to acquire the lock, returns that data could not be inserted.
+      bool try_push_back(Type t)
+      {
+        if (!lock.try_lock())
         {
           return false;
         }
+        std::lock_guard<spinlock> _lg(lock, std::adopt_lock);
 
-        ++write_head;
-        ++entry_count;
-
-        array[wh] = t;
-        return true;
+        return unlocked_push_back(t);
       }
 
       Type pop_front(bool& has_data)
@@ -77,7 +71,8 @@ namespace neam::cr
         return unlocked_pop_front(has_data);
       }
 
-      Type quick_pop_front(bool& has_data)
+      /// \brief try to lock the ring buffer an pop the front. If it fails to acquire the lock, returns that no data is present.
+      Type try_pop_front(bool& has_data)
       {
         if (!lock.try_lock())
         {
@@ -124,10 +119,30 @@ namespace neam::cr
         --entry_count;
         ++read_head;
         has_data = true;
-//         return array[rh];
-        Type temp = array[rh];
-        array[rh] = {};
-        return temp;
+        return array[rh];
+      }
+
+      bool unlocked_push_back(Type t)
+      {
+        uint32_t rh = get_head(read_head);
+        const uint32_t wh = get_head(write_head);
+
+        // just to normalize the check below
+        if (rh < wh)
+          rh += Size;
+
+        // no data: if we have one space left, we cannot store data
+        // as rh == wh is the empty buffer
+        if (rh - wh == 1 || entry_count == (Size - 2))
+        {
+          return false;
+        }
+
+        ++write_head;
+        ++entry_count;
+
+        array[wh] = t;
+        return true;
       }
 
     private:
