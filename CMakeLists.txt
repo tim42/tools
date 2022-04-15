@@ -2,17 +2,34 @@
 ## CMAKE file for neam/...
 ##
 
-cmake_minimum_required(VERSION 3.11)
+cmake_minimum_required(VERSION 3.21)
 
 project(ntools VERSION 0.2.0)
 
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# We need liburing for async IO
+# (without it, no io is compiled)
+find_package(LibUring)
+
+set(PUBLIC_LIBS )
+
+set(io_srcs)
+if (LIBURING_FOUND)
+  message(STATUS "Found liburing (${LIBURING_LIBRARY}), building with neam::io")
+  set(io_srcs io/context.cpp)
+  set(PUBLIC_LIBS ${PUBLIC_LIBS} ${LIBURING_LIBRARY})
+endif()
+
+# create the library
 add_library(ntools
     logger/logger.cpp
-    io/context.cpp
     threading/task.cpp
     threading/task_group_graph.cpp
     threading/task_manager.cpp
+    memory.cpp
+
+    ${io_srcs}
     test.cpp
 )
 
@@ -26,6 +43,13 @@ if (${USE_TRACY})
   add_compile_definitions(TRACY_ENABLE=1)
 endif()
 
+if (${USE_TRACY})
+  if (TARGET TracyClient)
+    set(PUBLIC_LIBS ${PUBLIC_LIBS} TracyClient)
+  endif()
+endif()
+
+
 if(MSVC)
   set(NTOOLS_FLAGS /W4 /WX /std:c++latest)
 else()
@@ -36,8 +60,10 @@ endif()
 target_compile_options(ntools PRIVATE ${NTOOLS_FLAGS})
 
 if (TARGET fmt)
-    target_link_libraries(ntools fmt)
+    set(PUBLIC_LIBS ${PUBLIC_LIBS} fmt)
 endif()
+
+target_link_libraries(ntools PUBLIC ${PUBLIC_LIBS})
 
 
 target_include_directories(ntools PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
