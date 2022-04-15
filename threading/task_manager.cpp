@@ -54,7 +54,6 @@ namespace neam::threading
 
     check::debug::n_assert(frame_state.groups[task_group].is_completed == false, "Trying to create a task from a completed group");
 
-//     return *new task(*this, task_group, frame_state.frame_key, std::move(func));
     task* ptr = (task*)transient_tasks.allocate(sizeof(task));
     new (ptr) task(*this, task_group, frame_state.frame_key, std::move(func));
     return *ptr;
@@ -64,11 +63,7 @@ namespace neam::threading
   {
     frame_state.groups[k_non_transient_task_group].remaining_tasks.fetch_add(1, std::memory_order_release);
 
-    task* ptr;
-    {
-      std::lock_guard<spinlock> _lg(alloc_lock);
-      ptr = non_transient_tasks.allocate();
-    }
+    task* ptr = non_transient_tasks.allocate();
     check::debug::n_assert(ptr != nullptr, "Failed to allocate a task");
 
     new (ptr) task(*this, k_non_transient_task_group, frame_state.frame_key, std::move(func));
@@ -89,7 +84,6 @@ namespace neam::threading
     t.~task();
     if (group == k_non_transient_task_group)
     {
-      std::lock_guard<spinlock> _lg(alloc_lock);
       non_transient_tasks.deallocate(&t);
     }
 
@@ -125,7 +119,7 @@ namespace neam::threading
         || frame_state.groups[t.key].will_start.load(std::memory_order_seq_cst)
         || frame_state.groups[t.key].is_started.load(std::memory_order_seq_cst))
     {
-      const uint32_t count = frame_state.tasks_that_can_run.fetch_add(1, std::memory_order_release);
+      [[maybe_unused]] const uint32_t count = frame_state.tasks_that_can_run.fetch_add(1, std::memory_order_release);
       //frame_state.tasks_that_can_run.notify_one();
       TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)count);
     }

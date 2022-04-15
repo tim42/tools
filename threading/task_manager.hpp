@@ -181,11 +181,9 @@ namespace neam::threading
       static void do_run_task(task& task);
 
     private:
-      spinlock alloc_lock;
-
       // Tasks that belong to a task group. Deletion is done at the end of the frame (no need to manually deallocate tasks this way)
       // Tasks allocated this way must have a task group and must run inside the frame it is allocated.
-      cr::frame_allocator<1024 * sizeof(task), true> transient_tasks;
+      cr::frame_allocator<8, true> transient_tasks;
 
       // Tasks that can run on multiple frames / are lower priority (they are used to fill gaps)
       // Those tasks don't belong to a task group (or more explicitly belong to task group 0)
