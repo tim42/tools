@@ -579,13 +579,13 @@ namespace neam::io
         // Count the queries for the same file w/ contiguous queries:
         unsigned iovec_count = 1;
         {
-          const bool append = pending_writes.front().offset == append;
+          const bool should_append = pending_writes.front().offset == append;
           size_t offset = pending_writes.front().offset + pending_writes.front().data.size;
           for (; iovec_count < pending_writes.size(); ++iovec_count)
           {
             if (fid != pending_writes[iovec_count].fid)
               break;
-            if (!append)
+            if (!should_append)
             {
               if (offset != pending_writes[iovec_count].offset)
                 break;
