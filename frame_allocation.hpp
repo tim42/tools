@@ -28,12 +28,15 @@
 
 #include <atomic>
 #include "tracy.hpp"
+#include "memory.hpp"
 
 namespace neam::cr
 {
   /// \brief fast, thread-safe allocator that has a fast-clear / fast allocation but no dealocation
   /// \brief IsArray means that all allocations will have the same type / same memory footprint
-  template<size_t ChunkSize = 16 * 1024, bool IsArray = false>
+  /// \note Contention makes it slow
+  /// \todo Do a better multi-threading-aware implem
+  template<size_t PageCount = 4, bool IsArray = false>
   class frame_allocator
   {
     private:
@@ -82,7 +85,7 @@ namespace neam::cr
       void* allocate(size_t count)
       {
         // skip allocations that will always fail
-        if (count > ChunkSize)
+        if (count > data_size)
           return nullptr;
 
         // skip empty allocations
@@ -93,7 +96,6 @@ namespace neam::cr
         // and allows to disregard alignemnts as a whole
         if (count % 8 != 0)
           count += 8 - count % 8;
-
 
         std::lock_guard<spinlock> _lg(lock);
 
@@ -107,7 +109,7 @@ namespace neam::cr
         }
 
         // allocate a new chunk as we don't have enough space:
-        if (current_chunk->offset + count > ChunkSize)
+        if (current_chunk->offset + count > data_size)
         {
           if (current_chunk->next != nullptr)
           {
@@ -192,9 +194,7 @@ namespace neam::cr
         last->next = nullptr;
         while (current != nullptr)
         {
-          chunk_t* next = current->next;
-          operator delete(current);
-          current = next;
+          current = deallocate_chunk(current);
         }
       }
 
@@ -212,9 +212,7 @@ namespace neam::cr
 
         while (current != nullptr)
         {
-          chunk_t* next = current->next;
-          operator delete(current);
-          current = next;
+          current = deallocate_chunk(current);
         }
       }
 
@@ -229,9 +227,9 @@ namespace neam::cr
       Type* get_entry(size_t index) const requires IsArray
       {
         std::lock_guard<spinlock> _lg(lock);
-        constexpr size_t entry_per_chunk = ChunkSize / sizeof(Type);
+        constexpr size_t entry_per_chunk = data_size / sizeof(Type);
         size_t chunk_index = index / entry_per_chunk;
-        const size_t offset_in_chunk = (index % entry_per_chunk) * ChunkSize;
+        const size_t offset_in_chunk = (index % entry_per_chunk) * sizeof(Type);
 
         chunk_t* it = first_chunk;
         while (it != nullptr && chunk_index > 0)
@@ -254,7 +252,8 @@ namespace neam::cr
     private:
       static chunk_t* allocate_chunk()
       {
-        chunk_t* chk = reinterpret_cast<chunk_t*>(operator new(sizeof(chunk_t) + ChunkSize));
+        void* ptr = memory::allocate_page(PageCount);
+        chunk_t* chk = reinterpret_cast<chunk_t*>(ptr);
         if (chk != nullptr)
         {
           // we don't even care about atomicity here:
@@ -266,7 +265,7 @@ namespace neam::cr
       static chunk_t* deallocate_chunk(chunk_t* chk)
       {
         chunk_t* next = chk->next;
-        operator delete(chk);
+        memory::free_page(chk, PageCount);
         return next;
       }
 
@@ -274,6 +273,7 @@ namespace neam::cr
       mutable spinlock lock;
       uint32_t allocation_count = 0;
       uint64_t total_memory = 0;
+      const uint64_t data_size = memory::get_page_size() * PageCount - sizeof(chunk_t);
 
       chunk_t* first_chunk = nullptr;
       chunk_t* current_chunk = nullptr;
