@@ -61,14 +61,15 @@ int main(int argc, char**argv)
     const neam::id_t file_3 = map_file("file_3.txt");
     const neam::id_t file_4 = map_file("file_4.txt");
 
-    // initial data:
-    ctx.queue_write(file_1, 0, raw_data::allocate_from(std::string("FILE_1 CONTENT:\n")));
-    ctx.queue_write(file_2, 0, raw_data::allocate_from(std::string("FILE_2 CONTENT:\n")));
+
+    constexpr unsigned k_entry_count = 1000000;
 
     // file_1: simply queue all write operations at the same time:
     // (will effectively issue a single write as they are all append writes)
     // ((Note, this is quite slow, as there is a lot of small bit of data scattering everywhere in memory)
-    constexpr unsigned k_entry_count = 1000000;
+
+    ctx.queue_write(file_1, 0, raw_data::allocate_from(std::string("FILE_1 CONTENT:\n")));
+
     {
       const std::string some_data("more and more data!\n");
 
@@ -84,6 +85,9 @@ int main(int argc, char**argv)
     // file_2: queue each write after the previous is completed:
     // much lower than file_1 as each write wait for the previous write to end
     // NOTE: there is no recursion in there. All calls are flattened by async::chain
+
+    ctx.queue_write(file_2, 0, raw_data::allocate_from(std::string("FILE_2 CONTENT:\n")));
+
     std::function<io::context::write_chain()> file_2_queue_write; // must live during the _wait_for_submit_queries
     {
       unsigned i = 0;

@@ -484,7 +484,7 @@ namespace neam::io
         unsigned iovec_count = 1;
         {
           size_t offset = pending_reads.front().offset + pending_reads.front().size;
-          for (; iovec_count < pending_reads.size(); ++iovec_count)
+          for (; iovec_count < pending_reads.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
           {
             if (fid != pending_reads[iovec_count].fid)
               break;
@@ -581,7 +581,7 @@ namespace neam::io
         {
           const bool should_append = pending_writes.front().offset == append;
           size_t offset = pending_writes.front().offset + pending_writes.front().data.size;
-          for (; iovec_count < pending_writes.size(); ++iovec_count)
+          for (; iovec_count < pending_writes.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
           {
             if (fid != pending_writes[iovec_count].fid)
               break;

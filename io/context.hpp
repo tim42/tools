@@ -56,6 +56,9 @@ namespace neam::io
   class context
   {
     private:
+      // Max number of queries that can be merged together.
+      // A too high value will cause the OS to outright reject the query.
+      static constexpr unsigned k_max_iovec_merge = IOV_MAX;
 
     public:
       using read_chain = async::chain<raw_data&& /*data*/, bool /*success*/>;
