@@ -60,9 +60,16 @@ namespace neam::async
       template<typename X> struct is_chain : public std::false_type {};
       template<typename... X> struct is_chain<chain<X...>> : public std::true_type {};
 
-      template<typename T> struct remove_rvalue_reference      {typedef T type;};
-      template<typename T> struct remove_rvalue_reference<T&&> {typedef T type;};
+      template<typename T> struct remove_rvalue_reference      {using type = T;};
+      template<typename T> struct remove_rvalue_reference<T&&> {using type = T;};
       template<typename T> using remove_rvalue_reference_t = typename remove_rvalue_reference<T>::type;
+
+      template<typename T> struct wrap_arg { using type = T; };
+      template<typename T> struct wrap_arg<T&> { using type = std::reference_wrapper<T>; };
+      template<typename T> struct wrap_arg<const T&> { using type = std::reference_wrapper<const T>; };
+      template<typename T> using wrap_arg_t = typename wrap_arg<T>::type;
+
+      using completed_args_t = std::optional<std::tuple<wrap_arg_t<remove_rvalue_reference_t<Args>>...>>;
 
       /// \brief Probably the only easy way to avoid all the complexity with locks
       /// This lock is shared with the state and the chain.
@@ -170,7 +177,7 @@ namespace neam::async
               if (tm != nullptr)
               {
                 // small gymnastic to still forward everything and not loose stuff around.
-                tm->get_task(group_id, [...args = std::forward<Args>(args), on_completed = std::move(on_completed)]() mutable
+                tm->get_task(group_id, [...args = std::forward<wrap_arg_t<Args>>(args), on_completed = std::move(on_completed)]() mutable
                 {
                   on_completed(std::forward<Args>(args)...);
                 });
@@ -457,7 +464,7 @@ namespace neam::async
 #else
 #define N_ASYNC_FWD_PARAMS
 #endif
-        using ret_type = typename std::result_of<Func(Args...)>::type;
+        using ret_type = std::invoke_result_t<Func, Args...>;
         if constexpr (std::is_same_v<ret_type, void>)
         {
           return then_void(N_ASYNC_FWD_PARAMS std::forward<Func>(cb));
@@ -575,7 +582,7 @@ namespace neam::async
     private:
       template<typename Func>
       static void call_with_completed_args(
-        std::optional<std::tuple<remove_rvalue_reference_t<Args>...>>& args,
+        completed_args_t& args,
 #if N_ASYNC_USE_TASK_MANAGER
         threading::task_manager* tm, threading::group_t group_id,
 #endif
@@ -602,7 +609,7 @@ namespace neam::async
     private:
       explicit chain(state& _link) : link(&_link), lock(_link.lock) {}
 
-      std::optional<std::tuple<remove_rvalue_reference_t<Args>...>> completed_args; // Just in case of completion before completed is ever set
+      completed_args_t completed_args; // Just in case of completion before completed is ever set
       state* link = nullptr;
 
       shared_lock_t lock;
