@@ -252,7 +252,7 @@ namespace neam::rle
         {
           using member = ct::list::get_type<typename n_metadata_member_definitions<T>::member_list, Index>;
           coder<typename member::type>::generate_metadata(mt);
-          contained_types.push_back(mt.ref<typename member::type>(member::name));
+          contained_types.push_back(mt.ref<typename member::type>(member::name.string));
         }.template operator()<Indices>(), ...);
       } (std::make_index_sequence<ct::list::size<typename n_metadata_member_definitions<T>::member_list>> {});
 

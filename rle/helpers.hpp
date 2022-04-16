@@ -79,6 +79,24 @@ namespace neam::rle
     }
   };
 
+  template<typename T>
+  struct coder<const T>
+  {
+    static void encode(encoder& ec, const T& v, status& st)
+    {
+      coder<T>::encode(ec, v, st);
+    }
+    static T decode(decoder& dc, status& st)
+    {
+      return coder<T>::decode(dc, st);
+    }
+
+    static void generate_metadata(serialization_metadata& mt)
+    {
+      coder<T>::generate_metadata(mt);
+    }
+  };
+
   /// \brief Helper for std::basic_string (includes std::string)
   template<typename CharT, typename Traits, typename Allocator>
   struct coder<std::basic_string<CharT, Traits, Allocator>>

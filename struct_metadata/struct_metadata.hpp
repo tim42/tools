@@ -47,7 +47,7 @@ namespace neam::metadata::internal
   template<typename T>
   struct member_definition_base
   {
-    using struct_type = T;
+    using struct_type = std::remove_cv_t<T>;
   };
 
   template<typename Type, size_t Offset, ct::string_holder Name>
@@ -55,7 +55,10 @@ namespace neam::metadata::internal
   {
     static constexpr size_t size = sizeof(Type);
     static constexpr size_t offset = Offset;
-    using type = Type;
+    using type = std::remove_cv_t<Type>;
+    using raw_type = Type;
+    static constexpr bool is_const = std::is_const_v<Type>;
+    static constexpr bool is_volatile = std::is_volatile_v<Type>;
     static constexpr ct::string_holder name = Name;
   };
 }

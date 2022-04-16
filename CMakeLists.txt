@@ -28,6 +28,7 @@ add_library(ntools
     threading/task_group_graph.cpp
     threading/task_manager.cpp
     memory.cpp
+    log_type.cpp
 
     ${io_srcs}
     test.cpp
