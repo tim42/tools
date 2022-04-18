@@ -29,6 +29,10 @@
 #include <memory>
 #include <string>
 
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+
 #include "../debug/unix_errors.hpp"
 
 #include "context.hpp"
@@ -48,13 +52,9 @@ namespace neam::io
     // wait pending submissions:
     _wait_for_submit_queries();
 
-    // close all opened files:
-    for (auto& it : r_opened_files)
-      check::unx::n_check_success(close(it.second));
-    r_opened_files.clear();
-    for (auto& it : w_opened_files)
-      check::unx::n_check_success(close(it.second));
-    w_opened_files.clear();
+    // close all opened fd:
+    for (auto& it : opened_fd)
+      check::unx::n_check_success(::close(it.second.fd));
 
     // exit uring
     io_uring_queue_exit(&ring);
@@ -66,26 +66,14 @@ namespace neam::io
     int fd = -1;
     struct stat st;
     {
-      if (fd == -1)
+      std::lock_guard _fdl(fd_lock);
+      if (const auto it = opened_fd.find(fid); it != opened_fd.end())
       {
-        std::lock_guard<spinlock> _prl(pending_reads_lock);
-        if (const auto it = r_opened_files.find(fid); it != r_opened_files.end())
-        {
-          fd = it->second;
-          if (check::unx::n_check_success(fstat(fd, &st)) < 0)
-            return 0;
-        }
-      }
-
-      if (fd == -1)
-      {
-        std::lock_guard<spinlock> _pwl(pending_writes_lock);
-        if (const auto it = w_opened_files.find(fid); it != w_opened_files.end())
-        {
-          fd = it->second;
-          if (check::unx::n_check_success(fstat(fd, &st)) < 0)
-            return 0;
-        }
+        if (!it->second.file)
+          return 0;
+        fd = it->second.fd;
+        if (check::unx::n_check_success(fstat(fd, &st)) < 0)
+          return 0;
       }
     }
 
@@ -119,32 +107,165 @@ namespace neam::io
     return 0;
   }
 
-  void context::force_close_all_files()
+  void context::force_close_all_fd(bool include_sockets)
   {
     // read then write
-    std::lock_guard<spinlock> _prl(pending_reads_lock);
-    std::lock_guard<spinlock> _pwl(pending_writes_lock);
+    std::lock_guard _fdl(fd_lock);
 
-    neam::cr::out().debug("io::context: forcefully moving all opened files ({}) to the to-close list", r_opened_files.size() + w_opened_files.size());
+    neam::cr::out().debug("io::context: forcefully moving all opened fd ({}) to the to-close list", opened_fd.size());
+
+    decltype(opened_fd) temp_fd;
+    temp_fd.swap(opened_fd);
     // move the opened lists to the to-close list
-    for (auto& it : r_opened_files)
-      opened_files_to_be_closed.emplace(it.second);
-    for (auto& it : w_opened_files)
-      opened_files_to_be_closed.emplace(it.second);
-
-    // clear everything (and the to-close lists, as now everything is to be closed)
-    r_opened_files.clear();
-    r_files_to_close.clear();
-    w_opened_files.clear();
-    w_files_to_close.clear();
+    for (auto& it : temp_fd)
+    {
+      if (include_sockets || !it.second.socket)
+        close(it.first);
+      else
+        opened_fd.emplace_hint(opened_fd.end(), it.first, it.second);
+    }
   }
 
   void context::clear_mapped_files()
   {
-    force_close_all_files();
+    force_close_all_fd();
     std::lock_guard<spinlock> _ml(mapped_lock);
     mapped_files.clear();
   }
+
+
+
+
+
+
+  // network thingies:
+
+
+
+
+  id_t context::register_socket(int fd, bool accept)
+  {
+    // create an ID for the socket
+    constexpr uint64_t k_socket_id_flag = 0XF000000000000000;
+    const id_t id = (id_t)(k_socket_id_flag | fd);
+
+    std::lock_guard<spinlock> _sl(fd_lock);
+    opened_fd.erase(id); // just in case
+    opened_fd.emplace(id, file_descriptor
+    {
+      .fd = fd,
+      .socket = true,
+      .file = false,
+
+      .read = !accept,
+      .write = !accept,
+      .accept = accept,
+    });
+
+    return id;
+  }
+
+  int context::_get_fd(id_t fid) const
+  {
+    std::lock_guard<spinlock> _sl(fd_lock);
+    if (const auto it = opened_fd.find(fid); it != opened_fd.end())
+      return it->second.fd;
+    return -1;
+  }
+
+  uint16_t context::get_socket_port(id_t sid) const
+  {
+    const int sock = _get_fd(sid);
+    if (sock < 0)
+      return 0;
+    struct sockaddr_in6 sin;
+    socklen_t len = sizeof(sin);
+    if (check::unx::n_check_success(getsockname(sock, (struct sockaddr*)&sin, &len)) < 0)
+      return 0;
+    return ntohs(sin.sin6_port);
+  }
+
+  void context::close(id_t fid)
+  {
+    std::lock_guard<spinlock> _sl(fd_lock);
+    const auto it = opened_fd.find(fid);
+    if (it == opened_fd.end())
+      return;
+    const int fd = it->second.fd;
+    opened_fd.erase(it);
+    fd_to_be_closed.insert(fd);
+  }
+
+
+  id_t context::create_listening_socket(uint16_t port, uint32_t listen_addr, uint16_t backlog_connection_count)
+  {
+    const int sock = check::unx::n_check_success(socket(PF_INET, SOCK_STREAM, 0));
+    if (sock == -1)
+      return id_t::invalid;
+    const id_t id = register_socket(sock, true);
+
+    {
+      int enable = 1;
+      check::unx::n_check_success(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)));
+    }
+    if (port != 0)
+    {
+      int enable = 1;
+      check::unx::n_check_success(setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)));
+    }
+
+    sockaddr_in srv_addr;
+    memset(&srv_addr, 0, sizeof(srv_addr));
+    srv_addr.sin_family = AF_INET;
+    srv_addr.sin_port = htons(port);
+    srv_addr.sin_addr.s_addr = htonl(listen_addr);
+
+    if (check::unx::n_check_success(bind(sock, (const struct sockaddr*)&srv_addr, sizeof(srv_addr))) < 0)
+    {
+      close(id);
+      return id_t::invalid;
+    }
+    if (check::unx::n_check_success(listen(sock, backlog_connection_count)) < 0)
+    {
+      close(id);
+      return id_t::invalid;
+    }
+
+    return id;
+  }
+
+  id_t context::create_connection_socket(const std::string& host)
+  {
+    const int sock = check::unx::n_check_success(socket(PF_INET, SOCK_STREAM, 0));
+    if (sock == -1)
+      return id_t::invalid;
+    const id_t id = register_socket(sock, false);
+
+    addrinfo* result;
+
+    if (check::unx::n_check_success(getaddrinfo(host.c_str(), nullptr, nullptr, &result)) < 0)
+    {
+      close(id);
+      return id_t::invalid;
+    }
+
+    // fixme: should be async
+    if (check::unx::n_check_success(connect(sock, result->ai_addr, result->ai_addrlen)) < 0)
+    {
+      freeaddrinfo(result);
+      close(id);
+      return id_t::invalid;
+    }
+    freeaddrinfo(result);
+
+    return id;
+  }
+
+
+
+  // query handling:
+
+
 
 
   void context::process()
@@ -156,35 +277,32 @@ namespace neam::io
 
     process_completed_queries();
 
-    // we queue the close() calls:
+    // we move all the opened files to the to_close list, so that next time we attempt to close them too
     {
-      std::lock_guard<spinlock> _pcl(pending_close_lock);
-      if (!queue_close_operations(opened_files_to_be_closed))
-        return; // failed to perform the close operations, submit queue is full
+      std::lock_guard<spinlock> _fdl(fd_lock);
+      std::vector<id_t> to_remove;
+      for (auto& it : opened_fd)
+      {
+        if (it.second.file && (it.second.counter++) >= k_max_cycle_to_close)
+        {
+          fd_to_be_closed.insert(it.second.fd);
+          to_remove.push_back(it.first);
+        }
+      }
+      for (const id_t id : to_remove)
+        opened_fd.erase(id);
     }
 
     // It may call process_completed_queries() when needed
     {
-      std::lock_guard<spinlock> _prl(pending_reads_lock);
-      if (!queue_close_operations(r_files_to_close, r_opened_files))
-        return; // failed to perform the close operations, submit queue is full
-    }
-    {
-      std::lock_guard<spinlock> _pwl(pending_writes_lock);
-      if (!queue_close_operations(w_files_to_close, w_opened_files))
-        return; // failed to perform the close operations, submit queue is full
+      // first cancel stuff, then close
+      queue_cancel_operations();
+      process_completed_queries();
     }
 
-    // we move all the opened files to the to_close list, so that next time we attempt to close them too
     {
-      std::lock_guard<spinlock> _prl(pending_reads_lock);
-      for (const auto& it : r_opened_files)
-        r_files_to_close.emplace(it.first);
-    }
-    {
-      std::lock_guard<spinlock> _pwl(pending_writes_lock);
-      for (const auto& it : w_opened_files)
-        w_files_to_close.emplace(it.first);
+      if (!queue_close_operations_fd())
+        return; // failed to perform the close operations, submit queue is full
     }
 
     // remove the close queries from the results:
@@ -193,6 +311,10 @@ namespace neam::io
 
     queue_readv_operations();
     queue_writev_operations();
+    queue_accept_operations();
+//     queue_connect_operations();
+
+    process_completed_queries();
   }
 
   void context::process_completed_queries()
@@ -201,18 +323,25 @@ namespace neam::io
       return;
     std::lock_guard<spinlock> _cl(completion_lock, std::adopt_lock);
 
-    // batch process the completion queue:
-    io_uring_cqe* cqes[queue_depth];
-    const unsigned completed_count = io_uring_peek_batch_cqe(&ring, cqes, queue_depth);
+    while (true)
+    {
+      // batch process the completion queue:
+      io_uring_cqe* cqes[queue_depth];
+      const unsigned completed_count = io_uring_peek_batch_cqe(&ring, cqes, queue_depth);
 
-    if (completed_count > 0)
-      cr::out().debug("process_completed_queries: {} completed queries", completed_count);
+      if (completed_count > 0)
+        cr::out().debug("process_completed_queries: {} completed queries", completed_count);
+      else
+        return;
 
-    for (unsigned i = 0; i < completed_count; ++i)
-      process_completed_query(cqes[i]);
+      for (unsigned i = 0; i < completed_count; ++i)
+        process_completed_query(cqes[i]);
+
+      process();
+    }
   }
 
-  void context::_wait_for_submit_queries()
+  void context::_wait_for_submit_queries(bool wait_for_everything)
   {
     if (!completion_lock.try_lock())
       return;
@@ -221,12 +350,12 @@ namespace neam::io
     // Send the remaining queries
     process();
 
-    if (has_remaining_operations())
-      cr::out().debug("_wait_for_submit_queries: waiting for {} read and {} write queries", submit_read_queries, submit_write_queries);
+    if (has_in_flight_operations())
+      cr::out().debug("_wait_for_submit_queries: waiting in-flight operations...");
 
     unsigned count = 0;
     // wat for everything to be done
-    while (has_remaining_operations())
+    while (has_in_flight_operations())
     {
       io_uring_cqe* cqe;
       check::unx::n_check_success(io_uring_wait_cqe(&ring, &cqe));
@@ -236,10 +365,34 @@ namespace neam::io
 
       // Just in case the callback added new stuff to process:
       process();
+
+      if (!wait_for_everything)
+        break;
     }
     if (count > 0)
       cr::out().debug("_wait_for_submit_queries: processed a total of {} queries", count);
   }
+
+  void context::_wait_for_queries()
+  {
+    if (!completion_lock.try_lock())
+      return;
+    std::lock_guard<spinlock> _cl(completion_lock, std::adopt_lock);
+
+    process();
+
+    // try to process everything
+    process_completed_queries();
+
+    // wait for the remaining in-flight stuff
+    if (has_in_flight_operations() && !has_pending_operations())
+    {
+      io_uring_cqe* cqe;
+      check::unx::n_check_success(io_uring_wait_cqe(&ring, &cqe));
+      process_completed_query(cqe);
+    }
+  }
+
 
   context::query::~query()
   {
@@ -247,39 +400,64 @@ namespace neam::io
     for (unsigned i = 0; i < iovec_count; ++i)
     {
       operator delete (iovecs[i].iov_base);
-      if (read_states)
+      if (type == type_t::read)
         read_states[i].~state();
-      if (write_states)
+      else if (type == type_t::write)
         write_states[i].~state();
+    }
+    if (type == type_t::accept)
+    {
+      accept_state->~state();
+    }
+    else if (type == type_t::connect)
+    {
+      connect_state->~state();
     }
   }
 
   context::query* context::query::allocate(id_t fid, type_t t, unsigned iovec_count)
   {
-    constexpr size_t callback_size = std::max(sizeof(read_chain::state), sizeof(write_chain::state));
+    size_t callback_size = 0;
+    switch (t)
+    {
+      case type_t::read: callback_size = sizeof(read_chain::state); break;
+      case type_t::write: callback_size = sizeof(write_chain::state); break;
+      case type_t::accept: callback_size = sizeof(accept_chain::state); break;
+      case type_t::connect: callback_size = sizeof(connect_chain::state); break;
+      case type_t::close: callback_size = 0; break;
+    }
     const size_t callback_offset = sizeof(query) + sizeof(iovec) * iovec_count;
-    void* ptr = operator new(callback_offset + callback_size * iovec_count);
+    void* ptr = operator new(callback_offset + callback_size * std::max(1u, iovec_count));
     query* q = (query*)ptr;
     q->fid = fid;
     q->type = t;
+    q->is_canceled = false;
     q->iovec_count = iovec_count;
     if (t == type_t::read)
     {
       q->read_states = (read_chain::state*)(((uint8_t*)ptr) + callback_offset);
-      q->write_states = nullptr;
       for (unsigned i = 0; i < iovec_count; ++i)
       {
         new (q->read_states + i) read_chain::state ();
       }
     }
-    if (t == type_t::write)
+    else if (t == type_t::write)
     {
-      q->read_states = nullptr;
       q->write_states = (write_chain::state*)(((uint8_t*)ptr) + callback_offset);
       for (unsigned i = 0; i < iovec_count; ++i)
       {
         new (q->write_states + i) write_chain::state ();
       }
+    }
+    else if (t == type_t::accept)
+    {
+      q->accept_state = (accept_chain::state*)(((uint8_t*)ptr) + callback_offset);
+      new (q->accept_state) accept_chain::state();
+    }
+    else if (t == type_t::connect)
+    {
+      q->connect_state = (connect_chain::state*)(((uint8_t*)ptr) + callback_offset);
+      new (q->connect_state) connect_chain::state();
     }
     return q;
   }
@@ -306,33 +484,90 @@ namespace neam::io
     return sqe;
   }
 
-  int context::open_file(id_t fid, int flags, std::unordered_map<id_t, int>& opened_files)
+  int context::open_file(id_t fid, bool read, bool write, bool truncate)
   {
-    int fd = -1;
-    if (const auto opened_files_it = opened_files.find(fid); opened_files_it != opened_files.end())
+    check::debug::n_assert(read || write, "io::context: cannot open a file with neither read nor write flags.");
+    off_t offset = 0;
+
+    std::lock_guard _fdl(fd_lock);
+    if (const auto it = opened_fd.find(fid); it != opened_fd.end())
     {
-      fd = opened_files_it->second;
-    }
-    else
-    {
-      // FIXME: can have race conditions:
-      if (!is_file_mapped(fid))
+      check::debug::n_assert(!it->second.accept, "io::context: cannot perform operations other than accept() on a fd flagged for accept.");
+
+      // reset the counter:
+      it->second.counter = 0;
+
+      bool reopen = false;
+      // the file is already opened, check if it has the correct flags:
+      if (read && !it->second.read)
+        reopen = true;
+      if (write && !it->second.write)
+        reopen = true;
+
+      if (reopen)
       {
-        check::debug::n_check(is_file_mapped(fid), "Failed to open {}: file not mapped", fid);
-        return -1;
+        neam::cr::out().debug("io::context::open_file: reopening {} with a different mode", fid);
+        read = read || it->second.read;
+        write = write || it->second.write;
+        truncate = false;
+
+        offset = lseek(it->second.fd, 0, SEEK_CUR);
+
+        // move the current fd to be closed
+        fd_to_be_closed.emplace(it->second.fd);
+        it->second.fd = -1;
       }
-      fd = check::unx::n_check_code(open(get_c_filename(fid), flags, 0644), "Failed to open {}", get_filename(fid));
-//       neam::cr::out().debug("io::context::open_file: opening `{}` using flags: 0x{:X}", get_filename(fid), flags);
+      else
+      {
+        return it->second.fd;
+      }
+    }
+
+    // not already opened, open it
+    std::lock_guard<spinlock> _ml(mapped_lock);
+    if (auto it = mapped_files.find(fid); it != mapped_files.end())
+    {
+      // compute the flags:
+      int flags = 0;
+      if (read && write)
+        flags = O_RDWR;
+      else if (read)
+        flags = O_RDONLY;
+      else if (write)
+        flags = O_WRONLY|O_CREAT;
+
+      if (truncate)
+        flags |= O_TRUNC;
+
+      const int fd = check::unx::n_check_code(open(it->second.c_str(), flags, 0644), "Failed to open {}", it->second.c_str());
+      if (offset != 0) // restore the offset
+        lseek(fd, offset, SEEK_SET);
+      neam::cr::out().debug("io::context::open_file: opening `{}` [read: {}, write: {}]", it->second.c_str(), read, write);
 
       if (fd < 0)
       {
+        opened_fd.erase(fid);
         return -1;
       }
 
       // opened: place the file in the opened files list
-      opened_files.emplace(fid, fd);
+      opened_fd.insert_or_assign(fid, file_descriptor
+      {
+        .fd = fd,
+        .socket = false,
+        .file = true,
+        .read = read,
+        .write = write,
+        .accept = false,
+      });
+      return fd;
     }
-    return fd;
+    else
+    {
+      opened_fd.erase(fid);
+      check::debug::n_check(false, "Failed to open {}: file not mapped", fid);
+      return -1;
+    }
   }
 
   void context::process_completed_query(io_uring_cqe* cqe)
@@ -350,7 +585,7 @@ namespace neam::io
       }
       else
       {
-        check::unx::n_check_code(cqe->res, "io::context::process_completed_queries: {} query on '{}' failed",
+        check::unx::n_check_code(cqe->res && !data->is_canceled, "io::context::process_completed_queries: {} query on '{}' failed",
                                  get_query_type_str(data->type),
                                  get_filename(data->fid)
                                 );
@@ -364,11 +599,18 @@ namespace neam::io
       switch (data->type)
       {
         case query::type_t::close: break;
+
         case query::type_t::write: process_write_completion(*data, cqe->res >= 0);
-          --submit_write_queries;
+          write_requests.decrement_in_flight();
           break;
-        case query::type_t::read: process_read_completion(*data, cqe->res >= 0);
-          --submit_read_queries;
+        case query::type_t::read: process_read_completion(*data, cqe->res >= 0, cqe->res);
+          read_requests.decrement_in_flight();
+          break;
+        case query::type_t::accept: process_accept_completion(*data, cqe->res >= 0, cqe->res);
+          accept_requests.decrement_in_flight();
+          break;
+        case query::type_t::connect: process_connect_completion(*data, cqe->res >= 0);
+          connect_requests.decrement_in_flight();
           break;
       }
 
@@ -380,15 +622,16 @@ namespace neam::io
     io_uring_cqe_seen(&ring, cqe);
   }
 
-  bool context::queue_close_operations(std::unordered_set<int>& fds)
+  bool context::queue_close_operations_fd()
   {
-    if (fds.size() > 0)
-      cr::out().debug("queue_close_operations: {} pending close operations", fds.size());
+    std::lock_guard _fdl(fd_lock);
+    if (fd_to_be_closed.size() > 0)
+      cr::out().debug("queue_close_operations_fd: {} pending close operations", fd_to_be_closed.size());
 
     bool has_done_any_delete = false;
-    while (fds.size() > 0)
+    while (fd_to_be_closed.size() > 0)
     {
-      const int fd = *fds.begin();
+      const int fd = *fd_to_be_closed.begin();
 
       // Get a SQE
       io_uring_sqe* const sqe = get_sqe(has_done_any_delete);
@@ -396,7 +639,7 @@ namespace neam::io
         return false;
 
       has_done_any_delete = true;
-      fds.erase(fds.begin());
+      fd_to_be_closed.erase(fd_to_be_closed.begin());
 
       io_uring_prep_close(sqe, fd);
       io_uring_sqe_set_data(sqe, nullptr);
@@ -405,33 +648,35 @@ namespace neam::io
     return true;
   }
 
-  bool context::queue_close_operations(std::unordered_set<id_t>& files_to_close, std::unordered_map<id_t, int>& opened_files)
+  void context::cancel_operation(query& q)
   {
-//     if (files_to_close.size() > 0)
-//       cr::out().debug("queue_close_operations: {} pending close operations", files_to_close.size());
+    std::lock_guard _fdl(fd_lock);
+    to_be_canceled.push_back(&q);
+  }
 
-    bool has_done_any_delete = false;
-    while (files_to_close.size() > 0)
+  void context::queue_cancel_operations()
+  {
+    std::lock_guard _fdl(fd_lock);
+    if (to_be_canceled.size() > 0)
+      cr::out().debug("queue_cancel_operations: {} pending cancel operations", to_be_canceled.size());
+
+    while (to_be_canceled.size() > 0)
     {
-      const id_t fid = *files_to_close.begin();
-      const auto opened_files_it = opened_files.find(fid);
-//       check::debug::n_assert(opened_files_it != opened_files.end(), "io::context::process: file in the to-close list isn't in the opened list");
-      const int fd = opened_files_it->second;
+      query* q = to_be_canceled.front();
 
       // Get a SQE
-      io_uring_sqe* const sqe = get_sqe(has_done_any_delete);
+      io_uring_sqe* const sqe = get_sqe(true);
       if (!sqe)
-        return false;
+        return;
 
-      has_done_any_delete = true;
-      opened_files.erase(opened_files_it);
-      files_to_close.erase(files_to_close.begin());
+      to_be_canceled.pop_front();
 
-      io_uring_prep_close(sqe, fd);
+      q->is_canceled = true;
+
+      io_uring_prep_cancel(sqe, q, 0);
       io_uring_sqe_set_data(sqe, nullptr);
       check::unx::n_check_success(io_uring_submit(&ring));
     }
-    return true;
   }
 
   void context::queue_readv_operations()
@@ -440,12 +685,12 @@ namespace neam::io
     std::vector<read_chain::state> failed_states;
 
     {
-      std::lock_guard<spinlock> _prl(pending_reads_lock);
-      if (pending_reads.empty())
+      std::lock_guard _prl(read_requests.lock);
+      if (read_requests.requests.empty())
         return;
       //cr::out().debug("queue_readv_operations: {} pending read operations", pending_reads.size());
       // sort reads by fid, so we have reads for the same file at the same place (better for readv)
-      std::sort(pending_reads.begin(), pending_reads.end(), [](const read_request& a, const read_request& b)
+      std::sort(read_requests.requests.begin(), read_requests.requests.end(), [](const read_request& a, const read_request& b)
       {
         if (a.fid == b.fid)
           return a.offset < b.offset;
@@ -454,25 +699,29 @@ namespace neam::io
 
       bool has_done_any_read = false;
 
-      while (pending_reads.size() > 0)
+      while (read_requests.requests.size() > 0)
       {
-        const id_t fid = pending_reads.front().fid;
+        if (read_requests.requests.front().state.is_canceled())
+        {
+          read_requests.requests.pop_front();
+          continue;
+        }
+
+        const id_t fid = read_requests.requests.front().fid;
 
         // check if the file is opened, else open it:
-        int fd = open_file(fid, O_RDONLY, r_opened_files);
+        const int fd = open_file(fid, true, false, false);
         if (fd < 0)
         {
           // fail all the queries for the same fid:
-          while (!pending_reads.empty() && fid == pending_reads.front().fid)
+          while (!read_requests.requests.empty() && fid == read_requests.requests.front().fid)
           {
-            failed_states.emplace_back(std::move(pending_reads.front().state));
-            pending_reads.pop_front();
+            failed_states.emplace_back(std::move(read_requests.requests.front().state));
+            read_requests.requests.pop_front();
           }
 
           continue;
         }
-
-        r_files_to_close.erase(fid);
 
         // Get a SQE
         io_uring_sqe* const sqe = get_sqe(has_done_any_read);
@@ -483,37 +732,45 @@ namespace neam::io
         // Count the queries for the same file w/ contiguous queries:
         unsigned iovec_count = 1;
         {
-          size_t offset = pending_reads.front().offset + pending_reads.front().size;
-          for (; iovec_count < pending_reads.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
+          size_t offset = read_requests.requests.front().offset + read_requests.requests.front().size;
+          for (; iovec_count < read_requests.requests.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
           {
-            if (fid != pending_reads[iovec_count].fid)
+            if (fid != read_requests.requests[iovec_count].fid)
               break;
-            if (offset != pending_reads[iovec_count].offset)
+            if (offset != read_requests.requests[iovec_count].offset)
               break;
-            offset += pending_reads[iovec_count].size;
+            offset += read_requests.requests[iovec_count].size;
           }
         }
 
         // Allocate + fill the query structure:
         query* q = query::allocate(fid, query::type_t::read, iovec_count);
-        const size_t offset = pending_reads.front().offset;
+        const size_t offset = read_requests.requests.front().offset;
 
         for (unsigned i = 0; i < iovec_count; ++i)
         {
-          q->iovecs[i].iov_len = pending_reads.front().size;
-          q->iovecs[i].iov_base = operator new(pending_reads.front().size);
-          q->read_states[i] = std::move(pending_reads.front().state);
+          q->iovecs[i].iov_len = read_requests.requests.front().size;
+          q->iovecs[i].iov_base = operator new(read_requests.requests.front().size);
+          q->read_states[i] = std::move(read_requests.requests.front().state);
 
-          memset(q->iovecs[i].iov_base, 0, pending_reads.front().size); // so valgrind is happy, can be skipped
+          memset(q->iovecs[i].iov_base, 0, read_requests.requests.front().size); // so valgrind is happy, can be skipped
 
-          pending_reads.pop_front();
+          read_requests.requests.pop_front();
         }
 
         io_uring_prep_readv(sqe, fd, q->iovecs, iovec_count, offset);
         io_uring_sqe_set_data(sqe, q);
 
         check::unx::n_check_success(io_uring_submit(&ring));
-        ++submit_read_queries;
+        ++read_requests.in_flight;
+
+        for (unsigned i = 0; i < iovec_count; ++i)
+        {
+          q->read_states[i].on_cancel([q, this]
+          {
+            cancel_operation(*q);
+          });
+        }
       }
     } // lock scope
 
@@ -530,13 +787,13 @@ namespace neam::io
     std::vector<write_chain::state> failed_states;
 
     {
-      std::lock_guard<spinlock> _pwl(pending_writes_lock);
-      if (pending_writes.empty())
+      std::lock_guard _pwl(write_requests.lock);
+      if (write_requests.requests.empty())
         return;
       //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
 
       // sort reads by fid, so we have reads for the same file at the same place (better for readv)
-      std::sort(pending_writes.begin(), pending_writes.end(), [](const write_request& a, const write_request& b)
+      std::sort(write_requests.requests.begin(), write_requests.requests.end(), [](const write_request& a, const write_request& b)
       {
         if (a.fid == b.fid)
           return a.offset < b.offset;
@@ -545,29 +802,29 @@ namespace neam::io
 
       bool has_done_any_writes = false;
 
-      while (pending_writes.size() > 0)
+      while (write_requests.requests.size() > 0)
       {
-        const id_t fid = pending_writes.front().fid;
+        if (write_requests.requests.front().state.is_canceled())
+        {
+          write_requests.requests.pop_front();
+          continue;
+        }
+
+        const id_t fid = write_requests.requests.front().fid;
 
         // check if the file is opened, else open it:
-        int flags = O_WRONLY|O_CREAT;
-        if (pending_writes.front().offset == 0)
-          flags |= O_TRUNC;
-
-        int fd = open_file(fid, flags, w_opened_files);
+        const int fd = open_file(fid, false, true, write_requests.requests.front().offset == 0);
         if (fd < 0)
         {
           // fail all the queries for the same fid:
-          while (!pending_writes.empty() && fid == pending_writes.front().fid)
+          while (!write_requests.requests.empty() && fid == write_requests.requests.front().fid)
           {
-            failed_states.emplace_back(std::move(pending_writes.front().state));
-            pending_writes.pop_front();
+            failed_states.emplace_back(std::move(write_requests.requests.front().state));
+            write_requests.requests.pop_front();
           }
 
           continue;
         }
-
-        w_files_to_close.erase(fid);
 
         // Get a SQE
         io_uring_sqe* const sqe = get_sqe(has_done_any_writes);
@@ -579,23 +836,23 @@ namespace neam::io
         // Count the queries for the same file w/ contiguous queries:
         unsigned iovec_count = 1;
         {
-          const bool should_append = pending_writes.front().offset == append;
-          size_t offset = pending_writes.front().offset + pending_writes.front().data.size;
-          for (; iovec_count < pending_writes.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
+          const bool should_append = write_requests.requests.front().offset == append;
+          size_t offset = write_requests.requests.front().offset + write_requests.requests.front().data.size;
+          for (; iovec_count < write_requests.requests.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
           {
-            if (fid != pending_writes[iovec_count].fid)
+            if (fid != write_requests.requests[iovec_count].fid)
               break;
             if (!should_append)
             {
-              if (offset != pending_writes[iovec_count].offset)
+              if (offset != write_requests.requests[iovec_count].offset)
                 break;
-              if (pending_writes[iovec_count].offset == append)
+              if (write_requests.requests[iovec_count].offset == append)
                 break;
-              offset += pending_writes[iovec_count].data.size;
+              offset += write_requests.requests[iovec_count].data.size;
             }
             else
             {
-              if (pending_writes[iovec_count].offset != append)
+              if (write_requests.requests[iovec_count].offset != append)
                 break;
             }
           }
@@ -603,14 +860,14 @@ namespace neam::io
 
         // Allocate + fill the query structure:
         query* q = query::allocate(fid, query::type_t::write, iovec_count);
-        const size_t offset = pending_writes.front().offset;
+        const size_t offset = write_requests.requests.front().offset;
 
         for (unsigned i = 0; i < iovec_count; ++i)
         {
-          q->iovecs[i].iov_len = pending_writes.front().data.size;
-          q->iovecs[i].iov_base = pending_writes.front().data.data.release();
-          q->write_states[i] = std::move(pending_writes.front().state);
-          pending_writes.pop_front();
+          q->iovecs[i].iov_len = write_requests.requests.front().data.size;
+          q->iovecs[i].iov_base = write_requests.requests.front().data.data.release();
+          q->write_states[i] = std::move(write_requests.requests.front().state);
+          write_requests.requests.pop_front();
         }
 
         io_uring_prep_writev(sqe, fd, q->iovecs, iovec_count, offset);
@@ -620,7 +877,15 @@ namespace neam::io
         io_uring_sqe_set_data(sqe, q);
 
         check::unx::n_check_success(io_uring_submit(&ring));
-        ++submit_write_queries;
+        ++write_requests.in_flight;
+
+        for (unsigned i = 0; i < iovec_count; ++i)
+        {
+          q->write_states[i].on_cancel([q, this]
+          {
+            cancel_operation(*q);
+          });
+        }
       }
     } // lock scope
 
@@ -631,18 +896,73 @@ namespace neam::io
     }
   }
 
+  void context::queue_accept_operations()
+  {
+    std::lock_guard _al(accept_requests.lock);
+    if (accept_requests.requests.empty())
+      return;
+    //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
+
+    bool has_done_any_accepts = false;
+
+    while (accept_requests.requests.size() > 0)
+    {
+      if (accept_requests.requests.front().state.is_canceled())
+      {
+        accept_requests.requests.pop_front();
+        continue;
+      }
+
+      const id_t fid = accept_requests.requests.front().fid;
+      const int fd = accept_requests.requests.front().sock_fd;
+
+      // Get a SQE
+      io_uring_sqe* const sqe = get_sqe(has_done_any_accepts);
+      if (!sqe)
+        return;
+
+      has_done_any_accepts = true;
+
+      // Allocate + fill the query structure:
+      query* q = query::allocate(fid, query::type_t::accept, 0);
+
+      *(q->accept_state) = std::move(accept_requests.requests.front().state);
+      accept_requests.requests.pop_front();
+
+      io_uring_prep_accept(sqe, fd, nullptr, nullptr, 0);
+
+      // add the append flags if necessary
+      io_uring_sqe_set_data(sqe, q);
+
+      check::unx::n_check_success(io_uring_submit(&ring));
+      ++accept_requests.in_flight;
+
+      q->accept_state->on_cancel([q, this]
+      {
+        cancel_operation(*q);
+      });
+    }
+  }
+
   void context::process_write_completion(query& q, bool success)
   {
     for (unsigned i = 0; i < q.iovec_count; ++i)
     {
-        q.write_states[i].complete(success);
+#if N_ASYNC_USE_TASK_MANAGER
+      q.write_states[i].set_default_deferred_info(task_manager, group_id);
+#endif
+
+      q.write_states[i].complete(success);
     }
   }
 
-  void context::process_read_completion(query& q, bool success)
+  void context::process_read_completion(query& q, bool success, size_t sz)
   {
     for (unsigned i = 0; i < q.iovec_count; ++i)
     {
+#if N_ASYNC_USE_TASK_MANAGER
+      q.read_states[i].set_default_deferred_info(task_manager, group_id);
+#endif
       if (!success)
       {
         q.read_states[i].complete({raw_data::unique_ptr(), 0}, false);
@@ -650,13 +970,42 @@ namespace neam::io
       else
       {
         // FIXME: Should be dispatched on other threads
-        q.read_states[i].complete({raw_data::unique_ptr(q.iovecs[i].iov_base), q.iovecs[i].iov_len}, true);
+        size_t data_len = std::min(sz, q.iovecs[i].iov_len);
+        q.read_states[i].complete({raw_data::unique_ptr(q.iovecs[i].iov_base), data_len}, true);
+        sz -= data_len;
 
         // We have transfered the ownership to the callback, remove the pointer
         q.iovecs[i].iov_base = nullptr;
       }
     }
   }
+
+  void context::process_accept_completion(query& q, bool success, int fd)
+  {
+#if N_ASYNC_USE_TASK_MANAGER
+    q.accept_state->set_default_deferred_info(task_manager, group_id);
+#endif
+
+    // add the new id as a socket supporting read/writes:
+    if (success)
+    {
+      const id_t id = register_socket(fd, false);
+      q.accept_state->complete(id);
+    }
+    else
+    {
+      q.accept_state->complete(id_t::invalid);
+    }
+  }
+
+  void context::process_connect_completion(query& q, bool success)
+  {
+#if N_ASYNC_USE_TASK_MANAGER
+    q.connect_state->set_default_deferred_info(task_manager, group_id);
+#endif
+    q.connect_state->complete(success);
+  }
+
 
   const char* context::get_query_type_str(query::type_t t)
   {
@@ -665,6 +1014,8 @@ namespace neam::io
       case query::type_t::close: return "close";
       case query::type_t::read: return "read";
       case query::type_t::write: return "write";
+      case query::type_t::accept: return "accept";
+      case query::type_t::connect: return "connect";
     }
     return "unknown";
   }

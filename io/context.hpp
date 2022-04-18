@@ -45,12 +45,13 @@
 
 #include "../async/async.hpp"
 #include "../raw_data.hpp"
+#include "../raw_memory_pool_ts.hpp"
 #include "../spinlock.hpp"
 
 namespace neam::io
 {
-  /// \brief manage file access. Mostly optimized for reads.
-  /// \warning only one thread should ever call process, process_completed_queries AND _wait_for_submit_queries
+  /// \brief manage async file access/network. Mostly optimized for reads.
+  /// \warning only one thread should ever call process, process_completed_queries, and _wait_for_submit_queries
   ///
   /// FIXME: The flag handling is a mess.
   class context
@@ -59,10 +60,13 @@ namespace neam::io
       // Max number of queries that can be merged together.
       // A too high value will cause the OS to outright reject the query.
       static constexpr unsigned k_max_iovec_merge = IOV_MAX;
+      static constexpr uint8_t k_max_cycle_to_close = 64;
 
     public:
       using read_chain = async::chain<raw_data&& /*data*/, bool /*success*/>;
       using write_chain = async::chain<bool /*success*/>;
+      using connect_chain = async::chain<bool /*success*/>;
+      using accept_chain = async::chain<id_t /* connection id (or invald)*/>;
 
       static constexpr size_t whole_file = ~uint64_t(0);
       static constexpr size_t append = ~uint64_t(0); // for writes only, indicate we want to append
@@ -73,6 +77,7 @@ namespace neam::io
 
       /// \brief Tweak some of the behavior to avoid bad cases in multi-threaded contexts.
       /// \note if true, process() will have to be manually called (see the warning on the class comment)
+      /// The default is true.
       void is_used_across_threads(bool multithreaded)
       {
         is_called_on_multiple_threads = multithreaded;
@@ -92,16 +97,18 @@ namespace neam::io
       /// \note This only applies to chains whose function is set. For the others, the callback will be called when they are set.
       void force_deferred_execution(threading::task_manager* tm, threading::group_t id)
       {
+        is_used_across_threads(true);
         task_manager = tm;
         group_id = id;
       }
 #endif
 
+    public: // file stuff
       const std::string& get_prefix_directory() const { return prefix_directory; }
       void set_prefix_directory(std::string prefix)
       {
         // prefix change means conflicts, we force close all opened files:
-        force_close_all_files();
+        force_close_all_fd(false);
 
         prefix_directory = std::move(prefix);
       }
@@ -139,12 +146,6 @@ namespace neam::io
         mapped_files.erase(fid);
       }
 
-      /// \brief Force a close operation on all the files
-      /// \note the close operation is not immediate and is low priority
-      ///       but there will be no contamination on the previously opened files
-      ///       and the newly opened ones (FDs wont be reused past this point)
-      void force_close_all_files();
-
       /// \brief Clear all mapped files
       void clear_mapped_files();
 
@@ -161,9 +162,6 @@ namespace neam::io
         return false;
       }
 
-      /// \brief returns on-disk size of the file
-      size_t get_file_size(id_t fid);
-
       /// \brief queue a read operation
       /// \param do_not_call_process should only be set to true when you follow the current call by another queue_read on the same file (for stuff like chunked-readig)
       /// \note may trigger a process if the waiting queue becomes too long
@@ -178,15 +176,7 @@ namespace neam::io
           size = get_file_size(fid);
 
         read_chain ret;
-        size_t pending_size = 0;
-        {
-          std::lock_guard<spinlock> _prl(pending_reads_lock);
-          pending_reads.push_back({fid, offset, size, ret.create_state()});
-          pending_size = pending_reads.size();
-
-          r_files_to_open.emplace(fid);
-          r_files_to_close.erase(fid);
-        }
+        const size_t pending_size = read_requests.add_request({fid, offset, size, ret.create_state()});
         if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
         {
           process();
@@ -206,15 +196,7 @@ namespace neam::io
         check::debug::n_assert(data.size > 0, "Writes of size 0 are invalid");
 
         write_chain ret;
-        size_t pending_size = 0;
-        {
-          std::lock_guard<spinlock> _pwl(pending_writes_lock);
-          pending_writes.push_back({fid, offset, std::move(data), ret.create_state()});
-          pending_size = pending_writes.size();
-
-          w_files_to_open.emplace(fid);
-          w_files_to_close.erase(fid);
-        }
+        const size_t pending_size = write_requests.add_request({fid, offset, std::move(data), ret.create_state()});
 
         if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
         {
@@ -223,28 +205,8 @@ namespace neam::io
         return ret;
       }
 
-      bool has_remaining_operations() const
-      {
-        // read then write
-        std::lock_guard<spinlock> _prl(pending_reads_lock);
-        std::lock_guard<spinlock> _pwl(pending_writes_lock);
-        return submit_read_queries != 0 || submit_write_queries != 0;
-      }
-
-      /// \brief process the queue
-      void process();
-
-      /// \brief Only process completed queries
-      /// \note Do not do any waiting
-      void process_completed_queries();
-
-      /// \brief Very much like process_completed_queries, but is instead locking
-      /// \note deafeats the purpose of using asynchronous IO.
-      ///       Should only be used in contexts where synchronicity is required.
-      ///       (like application destruction, where nothing else can be done, ...)
-      /// \note Please use process_completed_queries when possible, and when not possible please make it possible
-      ///       This is kind of a last-resort function
-      void _wait_for_submit_queries();
+      /// \brief returns on-disk size of the file
+      size_t get_file_size(id_t fid);
 
       std::string_view get_filename(id_t fid) const
       {
@@ -270,6 +232,87 @@ namespace neam::io
         return nullptr;
       }
 
+    public: // network stuff
+      /// \brief 4 bytes to a uint representing an ipv4
+      static constexpr uint32_t ipv4(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
+      {
+        return (uint32_t)(a) << 24 | (uint32_t)(b) << 16 | (uint32_t)(c) << 8 | (uint32_t)(d);
+      }
+
+      /// \brief Create a socket + call bind/listen on it.
+      id_t create_listening_socket(uint16_t port = 0, uint32_t listen_addr = ipv4(0, 0, 0, 0) /*INADDR_ANY*/, uint16_t backlog_connection_count = 16);
+
+      /// \brief Create a socket + call connect on it.
+      /// \todo Make this asynchronous instead (queue_connection(string))
+      id_t create_connection_socket(const std::string& host);
+
+
+      /// \brief Returns the socket's port or 0 if not valid
+      /// Usefull when passing 0 to the create_listening_socket port
+      uint16_t get_socket_port(id_t sid) const;
+
+      accept_chain queue_accept(id_t fid, bool do_not_call_process = false)
+      {
+        accept_chain ret;
+        const size_t pending_size = accept_requests.add_request({fid, _get_fd(fid), ret.create_state()});
+        if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
+        {
+          process();
+        }
+        return ret;
+      }
+
+
+    public: // advanced fd handling:
+      /// \brief Force a close operation on all the fd (sockets and files)
+      void force_close_all_fd(bool include_sockets = false);
+
+      /// \brief Close a socket. No further operation can be done on it.
+      void close(id_t fid);
+
+      /// \brief return the underlying fd. Present here in the event stuff needs to be done on the socket itself that neam::io is not aware of
+      int _get_fd(id_t fid) const;
+
+    public: // query handling:
+      /// \brief Only include in-flight operations: operations submit to liburing
+      /// \see has_pending_operations (
+      bool has_in_flight_operations() const
+      {
+        return write_requests.has_any_in_flight()
+               || read_requests.has_any_in_flight()
+               || accept_requests.has_any_in_flight()
+               || connect_requests.has_any_in_flight()
+               ;
+      }
+
+      /// \brief
+      bool has_pending_operations() const
+      {
+        return write_requests.has_any_pending()
+               || read_requests.has_any_pending()
+               || accept_requests.has_any_pending()
+               || connect_requests.has_any_pending()
+               ;
+      }
+
+      /// \brief process the queue
+      void process();
+
+      /// \brief Only process completed queries
+      /// \note Do not do any waiting
+      void process_completed_queries();
+
+      /// \brief Very much like process and process_completed_queries, but is instead blocking until _everything_ is done
+      /// \note deafeats the purpose of using asynchronous IO.
+      ///       Should only be used in contexts where synchronicity is required.
+      ///       (like application destruction, where nothing else can be done, ...)
+      /// \note Please use process_completed_queries when possible, and when not possible please make it possible
+      ///       This is kind of a last-resort function
+      void _wait_for_submit_queries(bool wait_for_everything = true);
+
+      /// \warning stall until there's something to do.
+      void _wait_for_queries();
+
     private: // data structure:
       struct read_request
       {
@@ -279,6 +322,7 @@ namespace neam::io
 
         read_chain::state state;
       };
+
       struct write_request
       {
         id_t fid;
@@ -288,22 +332,81 @@ namespace neam::io
         write_chain::state state;
       };
 
+      struct accept_request
+      {
+        id_t fid;
+        int sock_fd;
+
+        accept_chain::state state;
+      };
+
+      struct connect_request
+      {
+        id_t fid;
+        // todo: addr:
+
+        connect_chain::state state;
+      };
+
+      template<typename RequestType>
+      struct request
+      {
+        mutable spinlock lock;
+        std::deque<RequestType> requests;
+        unsigned in_flight = 0;
+
+        size_t add_request(RequestType&& rq)
+        {
+          std::lock_guard _l(lock);
+          requests.emplace_back(std::move(rq));
+          return requests.size();
+        }
+
+        bool has_any_in_flight() const
+        {
+          std::lock_guard _l(lock);
+          return in_flight != 0;
+        }
+        bool has_any_pending() const
+        {
+          std::lock_guard _l(lock);
+          return !requests.empty();
+        }
+        void decrement_in_flight()
+        {
+          std::lock_guard _l(lock);
+          in_flight -= 1;
+        }
+      };
+
       // user data sent to io-uring
       struct query
       {
-        id_t fid;
-
-        enum class type_t
+        enum class type_t : uint8_t
         {
+          // generic:
           close,
           read,
-          write
-        } type;
+          write,
 
+          // network:
+          accept,
+          connect,
+        };
+
+        id_t fid;
+        type_t type;
+
+        bool is_canceled;
 
         unsigned iovec_count;
-        read_chain::state* read_states;
-        write_chain::state* write_states;
+        union
+        {
+          read_chain::state* read_states;
+          write_chain::state* write_states;
+          accept_chain::state* accept_state;
+          connect_chain::state* connect_state;
+        };
         iovec iovecs[];
 
 
@@ -312,24 +415,48 @@ namespace neam::io
         static query* allocate(id_t fid, type_t t, unsigned iovec_count);
       };
 
+      struct file_descriptor
+      {
+        int fd;
+
+        uint8_t counter = 0;
+
+        // type: (should be.. a 1bit enum ?)
+        bool socket: 1;
+        bool file: 1;
+
+        // capabilities:
+        bool read: 1;
+        bool write: 1;
+        bool accept: 1; // cannot read or write
+      };
+
     private: // functions:
       io_uring_sqe* get_sqe(bool should_process);
 
-      int open_file(id_t fid, int flags, std::unordered_map<id_t, int>& opened_files);
+      int open_file(id_t fid, bool read, bool write, bool truncate);
+
+      id_t register_socket(int fd, bool accept);
 
       void process_completed_query(io_uring_cqe* cqe);
 
 
-      bool queue_close_operations(std::unordered_set<int>& fds);
-      bool queue_close_operations(std::unordered_set<id_t>& files_to_close, std::unordered_map<id_t, int>& opened_files);
+      bool queue_close_operations_fd();
+      bool queue_close_operations_id();
+
+      void cancel_operation(query& q);
+      void queue_cancel_operations();
 
       void queue_readv_operations();
-
       void queue_writev_operations();
+      void queue_accept_operations();
+      void queue_connect_operations();
+
 
       void process_write_completion(query& q, bool success);
-
-      void process_read_completion(query& q, bool success);
+      void process_read_completion(query& q, bool success, size_t sz);
+      void process_accept_completion(query& q, bool success, int ret);
+      void process_connect_completion(query& q, bool success);
 
       static const char* get_query_type_str(query::type_t t);
 
@@ -343,27 +470,22 @@ namespace neam::io
       spinlock process_lock;
       spinlock completion_lock;
 
+
       mutable spinlock mapped_lock;
       std::unordered_map<id_t, std::string> mapped_files;
 
-      mutable spinlock pending_reads_lock;
-      std::deque<read_request> pending_reads;
-      std::unordered_map<id_t, int> r_opened_files;
-      std::unordered_set<id_t> r_files_to_open;
-      std::unordered_set<id_t> r_files_to_close;
-      unsigned submit_read_queries = 0;
 
-      mutable spinlock pending_writes_lock;
-      std::deque<write_request> pending_writes;
-      std::unordered_map<id_t, int> w_opened_files;
-      std::unordered_set<id_t> w_files_to_open;
-      std::unordered_set<id_t> w_files_to_close;
-      unsigned submit_write_queries = 0;
+      mutable spinlock fd_lock;
+      std::unordered_map<id_t, file_descriptor> opened_fd;
+      std::unordered_set<int> fd_to_be_closed; // list of fd to be closed. fd must not be present in opened_fd.
+      std::deque<query*> to_be_canceled; // list of operations to cancel
 
-      mutable spinlock pending_close_lock;
-      std::unordered_set<int> opened_files_to_be_closed; // list of fd to close
+      request<read_request> read_requests;
+      request<write_request> write_requests;
+      request<accept_request> accept_requests;
+      request<connect_request> connect_requests;
 
-      unsigned last_process_pending_read_size = 0;
+
       static constexpr unsigned k_max_pending_queue_size = 20; // above this, it will trigger a process call()
 
       bool is_called_on_multiple_threads = true;
