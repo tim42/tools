@@ -94,6 +94,25 @@ namespace neam
         return hash;
       }
 
+      template<size_t BitCount, typename T>
+      static constexpr auto fnv1a_continue(list::get_type<internal::fnv_return_types, BitCount / 32 - 1> initial,
+                                           const T* const data, size_t len) -> auto
+      {
+        static_assert(BitCount == 32 || BitCount == 64, "We only support 32 and 64bit FNV-1a hash function");
+
+        using type = list::get_type<internal::fnv_return_types, BitCount / 32 - 1>;
+
+        static_assert(sizeof(T) == 1, "Input type must be 8bit");
+
+        static_assert(internal::fnv_prime<type> != 0, "Invalid prime (are you using a supported type ?)");
+
+        type hash = initial;
+        // StrLen - 1 is to skip the ending \0
+        for (size_t i = 0; i < len - 1; ++i)
+          hash = ((uint8_t)(data[i]) ^ hash) * internal::fnv_prime<type>;
+        return hash;
+      }
+
       template<size_t BitCount, size_t StrLen>
       static constexpr auto fnv1a_continue(list::get_type<internal::fnv_return_types, BitCount / 32 - 1> initial,
                                            const char (&str)[StrLen]) -> auto
