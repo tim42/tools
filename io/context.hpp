@@ -242,15 +242,28 @@ namespace neam::io
       /// \brief Create a socket + call bind/listen on it.
       id_t create_listening_socket(uint16_t port = 0, uint32_t listen_addr = ipv4(0, 0, 0, 0) /*INADDR_ANY*/, uint16_t backlog_connection_count = 16);
 
-      /// \brief Create a socket + call connect on it.
-      /// \todo Make this asynchronous instead (queue_connection(string))
-      id_t create_connection_socket(const std::string& host);
+      /// \brief Create a socket + (for use with queue_connect)
+      id_t create_socket();
+
+      /// \brief connect to a host. Return whether the connect has succeeded or not.
+      connect_chain queue_connect(id_t fid, std::string host, bool do_not_call_process = false)
+      {
+        connect_chain ret;
+        const size_t pending_size = connect_requests.add_request({fid, _get_fd(fid), std::move(host), ret.create_state()});
+        if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
+        {
+          process();
+        }
+        return ret;
+      }
 
 
       /// \brief Returns the socket's port or 0 if not valid
       /// Usefull when passing 0 to the create_listening_socket port
       uint16_t get_socket_port(id_t sid) const;
 
+      /// \brief Accept a connection.
+      /// Return the new connection id (or invalid)
       accept_chain queue_accept(id_t fid, bool do_not_call_process = false)
       {
         accept_chain ret;
@@ -343,7 +356,8 @@ namespace neam::io
       struct connect_request
       {
         id_t fid;
-        // todo: addr:
+        int sock_fd;
+        std::string addr;
 
         connect_chain::state state;
       };

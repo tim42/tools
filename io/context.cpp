@@ -234,29 +234,12 @@ namespace neam::io
     return id;
   }
 
-  id_t context::create_connection_socket(const std::string& host)
+  id_t context::create_socket()
   {
     const int sock = check::unx::n_check_success(socket(PF_INET, SOCK_STREAM, 0));
     if (sock == -1)
       return id_t::invalid;
     const id_t id = register_socket(sock, false);
-
-    addrinfo* result;
-
-    if (check::unx::n_check_success(getaddrinfo(host.c_str(), nullptr, nullptr, &result)) < 0)
-    {
-      close(id);
-      return id_t::invalid;
-    }
-
-    // fixme: should be async
-    if (check::unx::n_check_success(connect(sock, result->ai_addr, result->ai_addrlen)) < 0)
-    {
-      freeaddrinfo(result);
-      close(id);
-      return id_t::invalid;
-    }
-    freeaddrinfo(result);
 
     return id;
   }
@@ -942,6 +925,77 @@ namespace neam::io
         cancel_operation(*q);
       });
     }
+  }
+
+  void context::queue_connect_operations()
+  {
+    // so we can call the failed states outside the write lock
+    std::vector<connect_chain::state> failed_states;
+
+    {
+      std::lock_guard _al(connect_requests.lock);
+      if (connect_requests.requests.empty())
+        return;
+      //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
+
+      bool has_done_any_connects = false;
+
+      while (connect_requests.requests.size() > 0)
+      {
+        if (connect_requests.requests.front().state.is_canceled())
+        {
+          connect_requests.requests.pop_front();
+          continue;
+        }
+
+        const id_t fid = connect_requests.requests.front().fid;
+        const int fd = connect_requests.requests.front().sock_fd;
+
+        addrinfo* result;
+        if (check::unx::n_check_success(getaddrinfo(connect_requests.requests.front().addr.c_str(), nullptr, nullptr, &result)) < 0)
+        {
+          failed_states.push_back(std::move(connect_requests.requests.front().state));
+          connect_requests.requests.pop_front();
+          continue;
+        }
+
+        // Get a SQE
+        io_uring_sqe* const sqe = get_sqe(has_done_any_connects);
+        if (!sqe)
+        {
+          freeaddrinfo(result);
+          return;
+        }
+
+        has_done_any_connects = true;
+
+        // Allocate + fill the query structure:
+        query* q = query::allocate(fid, query::type_t::connect, 0);
+
+        *(q->connect_state) = std::move(connect_requests.requests.front().state);
+        connect_requests.requests.pop_front();
+
+        io_uring_prep_connect(sqe, fd, result->ai_addr, result->ai_addrlen);
+
+        // add the append flags if necessary
+        io_uring_sqe_set_data(sqe, q);
+
+        check::unx::n_check_success(io_uring_submit(&ring));
+        ++connect_requests.in_flight;
+
+        q->connect_state->on_cancel([q, this]
+        {
+          cancel_operation(*q);
+        });
+      }
+    } // lock scope
+
+    // complete the failed states outside the readlock so that they can queue read operations
+    for (auto& state : failed_states)
+    {
+      state.complete(false);
+    }
+
   }
 
   void context::process_write_completion(query& q, bool success)
