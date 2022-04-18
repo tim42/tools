@@ -165,14 +165,13 @@ namespace neam::async
 
           void complete(Args... args)
           {
-            std::lock_guard _lg(lock);
+            lock.lock();
             check::debug::n_assert(is_completed == false, "double state completion detected");
             is_completed = true;
 
-            if (canceled)
-              return;
             if (on_completed)
             {
+              lock.unlock();
 #if N_ASYNC_USE_TASK_MANAGER
               if (tm != nullptr)
               {
@@ -190,6 +189,8 @@ namespace neam::async
               }
               return;
             }
+            std::lock_guard _lg(lock, std::adopt_lock);
+
             if (link)
             {
               link->completed_args.emplace(std::forward<Args>(args)...);
@@ -239,6 +240,7 @@ namespace neam::async
             std::lock_guard _lg(lock);
 
             canceled = o.canceled;
+            on_cancel_cb = std::move(o.on_cancel_cb);
             is_completed = o.is_completed;
             link = o.link;
             if (link)
@@ -256,12 +258,23 @@ namespace neam::async
 
           bool is_canceled() const { return canceled; }
 
+          template<typename Func>
+          void on_cancel(Func&& func)
+          {
+            std::lock_guard _lg(lock);
+            if (canceled)
+            {
+              func();
+              return;
+            }
+            on_cancel_cb = std::move(func);
+          }
+
 #if N_ASYNC_USE_TASK_MANAGER
           void set_default_deferred_info(threading::task_manager* _tm, threading::group_t _group_id)
           {
             std::lock_guard _lg(lock);
-            if (tm == nullptr)
-              set_deferred_info(_tm, _group_id);
+            set_deferred_info(_tm, _group_id);
           }
 #endif
 
@@ -270,14 +283,31 @@ namespace neam::async
 #if N_ASYNC_USE_TASK_MANAGER
           void set_deferred_info(threading::task_manager* _tm, threading::group_t _group_id)
           {
-            tm = _tm;
-            group_id = _group_id;
+            if (_tm != nullptr)
+            {
+              tm = _tm;
+              group_id = _group_id;
+            }
           }
 #endif
+
+          void cancel()
+          {
+            // lock must be held
+            if (!canceled)
+            {
+              canceled = true;
+              if (on_cancel_cb)
+              {
+                on_cancel_cb();
+              }
+            }
+          }
 
           chain* link = nullptr;
 //           std::move_only_function
           fu2::unique_function<void(Args...)> on_completed;
+          fu2::unique_function<void()> on_cancel_cb;
 
           bool canceled = false;
           bool is_completed = false;
@@ -324,13 +354,15 @@ namespace neam::async
         using ret_type = typename std::result_of<Func(Args...)>::type;
         static_assert(std::is_same_v<ret_type, void>, "return type is not void");
 
-        std::lock_guard _lg(lock);
+        lock.lock();
 
         check::debug::n_assert(has_completion_set == false, "Double call to then/then_void/use_state detected");
         has_completion_set = true;
 
         if (completed_args)
         {
+          if (link) link->link = nullptr;
+          lock.unlock(); // call without the lock held
 #if N_ASYNC_USE_TASK_MANAGER
           call_with_completed_args(completed_args, tm, group_id, cb);
 #else
@@ -338,10 +370,12 @@ namespace neam::async
 #endif
           return;
         }
+        std::lock_guard _lg(lock, std::adopt_lock);
         if (link != nullptr)
         {
 #if N_ASYNC_USE_TASK_MANAGER
-          link->set_deferred_info(tm, group_id);
+          if (tm != nullptr)
+            link->set_deferred_info(tm, group_id);
 #endif
           link->on_completed = std::move(cb);
           return;
@@ -374,7 +408,7 @@ namespace neam::async
         if (&other == link)
           return;
 
-        std::lock_guard _lg(lock);
+        lock.lock();
 
         check::debug::n_assert(has_completion_set == false, "Double call to then/then_void/use_state detected");
         has_completion_set = true;
@@ -383,6 +417,8 @@ namespace neam::async
           // we are already completed, simply complete the state
           if (completed_args)
           {
+            if (link) link->link = nullptr; // unlink
+            lock.unlock(); // call without the lock held
             // this handles the case where the other chain is alive or the callback has been set
             // move around the args and call without the lock held
 #if N_ASYNC_USE_TASK_MANAGER
@@ -393,6 +429,9 @@ namespace neam::async
             return;
           }
         }
+
+        std::lock_guard _lg(lock, std::adopt_lock);
+
         // else, we are not completed
         {
           check::debug::n_assert(link != nullptr, "Unable to chain the states as the state has been destructed without being completed");
@@ -416,7 +455,8 @@ namespace neam::async
             {
               target_state->on_completed = std::move(other.on_completed);
 #if N_ASYNC_USE_TASK_MANAGER
-              target_state->set_deferred_info(other.tm, other.group_id);
+              if (other.tm != nullptr)
+                target_state->set_deferred_info(other.tm, other.group_id);
 #endif
               other.on_completed = nullptr;
               return;
@@ -448,7 +488,7 @@ namespace neam::async
       ///     ...;
       ///  \note the chain types can be different allowing for more flexibility
       ///  \note valid return types are:
-      ///   - void: same as calling then_void()
+      ///   - void: same as calling then() with a continuation chain (chain<>)
       ///   - chain< ... >, allow chaining from the return value as if the callback was called in the current scope
       ///   - any_other_type_t: return a chain< any_other_type_t&& > / chain< any_other_type_t > 
       ///     If any_other_type_t is a std::is_trivially_copyable<> or don't have a move constructor, it's a plain type, otherwise it's a &&
@@ -467,7 +507,15 @@ namespace neam::async
         using ret_type = std::invoke_result_t<Func, Args...>;
         if constexpr (std::is_same_v<ret_type, void>)
         {
-          return then_void(N_ASYNC_FWD_PARAMS std::forward<Func>(cb));
+          chain<> ret;
+          then_void(N_ASYNC_FWD_PARAMS [cb = std::move(cb), state = ret.create_state()] (Args... args) mutable
+          {
+            cb(std::forward<Args>(args)...);
+            state.complete();
+          });
+          return ret;
+
+//           return then_void(N_ASYNC_FWD_PARAMS std::forward<Func>(cb));
         }
         else if constexpr (is_chain<ret_type>::value)
         {
@@ -570,12 +618,22 @@ namespace neam::async
         return *this;
       }
 
+      /// \brief cancel the current chain.
+      /// \warning cancel does not bubble up, but instead cancel the current.
+      ///          (it would require a separate chain just to handle cancels, chain that would also have to handle cancelations...)
+      ///          chain<  > c = do_async_stuff()
+      ///          chain<  > d = c.then( ... );
+      ///          d.cancel() // does only cancel d, not c.
+      ///          c.cancel() // cancel c, (d might still be completed/called, depending on how the state is handled)
+      ///
+      /// How cancelation is handled depend on how the state is handled.
+      /// The code handling the state might not be able to cancel the thing, or decide to still (or not) call the completion callback.
       void cancel()
       {
         std::lock_guard<shared_lock_t> _lg(lock);
         if (link != nullptr)
         {
-          link->canceled = true;
+          link->cancel();
         }
       }
 
