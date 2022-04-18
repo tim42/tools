@@ -526,6 +526,14 @@ namespace neam::threading
     return elapsed;
   }
 
+  bool task_manager::has_pending_tasks() const
+  {
+    if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
+      return true;
+    return false;
+  }
+
+
   void task_manager::reset_state()
   {
     TRACY_FRAME_MARK;

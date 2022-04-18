@@ -148,6 +148,11 @@ namespace neam::threading
       /// \return the actual elapsed duration (as mesured internally)
       std::chrono::microseconds run_tasks(std::chrono::microseconds duration);
 
+      /// \brief Returns whether tasks are pending or not
+      /// Only tasks that can be actively executed in the current context are reported
+      /// This does not include tasks that are pending but whose task-group is not yet started
+      bool has_pending_tasks() const;
+
     public: // state stuff, must be called from within a task (or have a task in scope)
             // WARNING: ALL THOSE FUNCTIONS MIGHT BREAK IF THERE ARE MULTIPLE TASK_MANAGERS
 
