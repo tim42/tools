@@ -47,10 +47,23 @@ namespace neam::cr
       static_assert(Size > 2, "Size must be greater than 2");
 
     public:
+      /// \brief Try to push back an element. Return whether the element has been inserted
       bool push_back(Type t)
       {
-        std::lock_guard<spinlock> _lg(lock);
+        std::lock_guard _lg(lock);
         return unlocked_push_back(t);
+      }
+
+      /// \brief Try to push back some elements. Return the number of element inserted
+      size_t push_back(const Type* t, size_t count)
+      {
+        std::lock_guard _lg(lock);
+        for (size_t i = 0; i < count; ++i)
+        {
+          if (!unlocked_push_back(t[i]))
+            return i;
+        }
+        return count;
       }
 
       /// \brief try to lock the ring buffer an pop the front. If it fails to acquire the lock, returns that data could not be inserted.
@@ -60,15 +73,67 @@ namespace neam::cr
         {
           return false;
         }
-        std::lock_guard<spinlock> _lg(lock, std::adopt_lock);
+        std::lock_guard _lg(lock, std::adopt_lock);
 
         return unlocked_push_back(t);
       }
 
       Type pop_front(bool& has_data)
       {
-        std::lock_guard<spinlock> _lg(lock);
-        return unlocked_pop_front(has_data);
+        std::lock_guard _lg(lock);
+        return unlocked_pop_front(has_data, true);
+      }
+
+      Type pop_front()
+      {
+        std::lock_guard _lg(lock);
+        bool has_data;
+        return unlocked_pop_front(has_data, true);
+      }
+
+      Type peek_front(bool& has_data) const
+      {
+        std::lock_guard _lg(lock);
+        return unlocked_at(has_data, 0);
+      }
+
+      Type at(uint32_t index, bool& has_data) const
+      {
+        std::lock_guard _lg(lock);
+        return unlocked_at(has_data, index);
+      }
+      Type at(uint32_t index) const
+      {
+        std::lock_guard _lg(lock);
+        bool has_data;
+        return unlocked_at(has_data, index);
+      }
+
+      size_t pop_front(size_t count)
+      {
+        std::lock_guard _lg(lock);
+        for (size_t i = 0; i < count; ++i)
+        {
+          bool has_data = true;
+          unlocked_pop_front(has_data, true);
+          if (!has_data)
+            return i;
+        }
+        return count;
+      }
+
+      size_t pop_front(Type* array, size_t count)
+      {
+        std::lock_guard _lg(lock);
+        for (size_t i = 0; i < count; ++i)
+        {
+          bool has_data = true;
+          Type c = unlocked_pop_front(has_data, true);
+          if (!has_data)
+            return i;
+          array[i] = c;
+        }
+        return count;
       }
 
       /// \brief try to lock the ring buffer an pop the front. If it fails to acquire the lock, returns that no data is present.
@@ -81,7 +146,7 @@ namespace neam::cr
         }
         std::lock_guard<spinlock> _lg(lock, std::adopt_lock);
 
-        return unlocked_pop_front(has_data);
+        return unlocked_pop_front(has_data, true);
       }
 
       uint32_t size() const
@@ -103,7 +168,19 @@ namespace neam::cr
         return (h % Size);
       }
 
-      Type unlocked_pop_front(bool& has_data)
+      Type unlocked_at(bool& has_data, uint32_t index) const
+      {
+        const uint32_t rh = get_head(read_head + index);
+        const uint32_t wh = get_head(write_head);
+        if (rh == wh || index >= entry_count)
+        {
+          has_data = false;
+          return {};
+        }
+        has_data = true;
+        return array[rh];
+      }
+      Type unlocked_pop_front(bool& has_data, bool do_pop)
       {
         const uint32_t rh = get_head(read_head);
         const uint32_t wh = get_head(write_head);
@@ -116,8 +193,11 @@ namespace neam::cr
         }
 
         // has data
-        --entry_count;
-        ++read_head;
+        if (do_pop)
+        {
+          --entry_count;
+          ++read_head;
+        }
         has_data = true;
         return array[rh];
       }
