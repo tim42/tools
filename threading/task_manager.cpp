@@ -158,6 +158,13 @@ namespace neam::threading
 
   bool task_manager::advance()
   {
+    // check that we can advance
+    if (frame_state.frame_lock._get_state())
+    {
+      // the lock is locked, we don't advance.
+      return false;
+    }
+
     // Avoid spamming advance() and create lock contention
     thread_local uint32_t last_global_state_key = ~0u;
     const uint32_t global_state_key = frame_state.global_state_key.load(std::memory_order_acquire);
