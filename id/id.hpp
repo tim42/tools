@@ -39,6 +39,13 @@ namespace neam
     invalid = ~uint64_t(0)
   };
 
+  /// \brief Append a string to an indentifier
+  template<size_t Count>
+  static constexpr id_t append(id_t id, const char (&str)[Count])
+  {
+    return (id_t)ct::hash::fnv1a_continue<64, Count>((uint64_t)id, str);
+  }
+
   /// \brief Add a parameter to an identifier
   /// In hydra (using the resource system) :
   /// parametrize("/path/to/shader.frag:spirv", "main") is equivalent to "/path/to/shader.frag:spirv(main)"
@@ -52,7 +59,21 @@ namespace neam
     id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, ")");
     return id;
   }
-
+  template<size_t Count>
+  static constexpr id_t parametrize(id_t id,ct::string_holder<Count>& _str)
+  {
+    id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, "(");
+    id = (id_t)ct::hash::fnv1a_continue<64, Count>((uint64_t)id, _str.string);
+    id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, ")");
+    return id;
+  }
+  static constexpr id_t parametrize(id_t id, const char* str, size_t len)
+  {
+    id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, "(");
+    id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, str, len);
+    id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, ")");
+    return id;
+  }
   /// specialize("/path/to/image.png", "image") is equivalent to "/path/to/image.png:image"
   /// specialize("/path/to/image.png:image", "mipmap") is equivalent to "/path/to/image.png:image:mipmap"
   template<size_t Count>
@@ -62,10 +83,27 @@ namespace neam
     id = (id_t)ct::hash::fnv1a_continue<64, Count>((uint64_t)id, str);
     return id;
   }
+  static constexpr id_t specialize(id_t id, const char* str, size_t len)
+  {
+    id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, ":");
+    id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, str, len);
+    return id;
+  }
   template<size_t Count>
   static constexpr id_t specialize(id_t id, const ct::string_holder<Count>& _str)
   {
     return specialize(id, _str.string);
+  }
+
+  static constexpr uint32_t fold32(id_t id)
+  {
+    uint64_t uid = (uint64_t)id;
+    return uint32_t(((uid >> 32) ^ uid) & 0xFFFFFFFF);
+  }
+  static constexpr uint32_t fold31(id_t id)
+  {
+    uint64_t uid = (uint64_t)id;
+    return uint32_t(((uid >> 32) * uid) & 0x7FFFFFFF);
   }
 }
 
