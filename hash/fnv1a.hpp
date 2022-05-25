@@ -107,8 +107,8 @@ namespace neam
         static_assert(internal::fnv_prime<type> != 0, "Invalid prime (are you using a supported type ?)");
 
         type hash = initial;
-        // StrLen - 1 is to skip the ending \0
-        for (size_t i = 0; i < len - 1; ++i)
+
+        for (size_t i = 0; i < len; ++i)
           hash = ((uint8_t)(data[i]) ^ hash) * internal::fnv_prime<type>;
         return hash;
       }
