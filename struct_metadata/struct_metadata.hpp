@@ -30,6 +30,8 @@
 #include "../ct_string.hpp"
 #include "../ct_list.hpp"
 
+#define N_METADATA_STRUCT_DECL(Struct) struct n_metadata_member_definitions<Struct>
+
 #define N_METADATA_STRUCT(Struct) template<> struct n_metadata_member_definitions<Struct> : public ::neam::metadata::internal::member_definition_base<Struct>
 
 
