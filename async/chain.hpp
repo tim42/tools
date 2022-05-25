@@ -43,6 +43,12 @@
 // waiting for std::move_only_function to be availlable, here is a ~drop-in replacement
 #include "internal_do_not_use_cpp23_replacement/function2.hpp"
 
+#if N_ASYNC_USE_TASK_MANAGER
+#define N_ASYNC_FWD_PARAMS tm, group_id,
+#else
+#define N_ASYNC_FWD_PARAMS
+#endif
+
 namespace neam::async
 {
   /// \brief Represent a list of chainable actions for asynchronous execution. A bit like a promise, but without the name.
@@ -348,7 +354,7 @@ namespace neam::async
       {
         // use_state is faster than then, as is re-links the chain and state
         if constexpr (std::is_same_v<Func, state>)
-          return use_state(std::move(cb));
+          return use_state(N_ASYNC_FWD_PARAMS std::move(cb));
 
 
         using ret_type = typename std::result_of<Func(Args...)>::type;
@@ -403,7 +409,11 @@ namespace neam::async
 
       /// \brief complete the provided state on completion.
       /// re-link state and chain so that the original state will trigger the final chain (no recursion in there)
-      void use_state(state& other)
+      void use_state(
+#if N_ASYNC_USE_TASK_MANAGER
+        threading::task_manager* tm, threading::group_t group_id,
+#endif
+        state& other)
       {
         if (&other == link)
           return;
@@ -422,7 +432,7 @@ namespace neam::async
             // this handles the case where the other chain is alive or the callback has been set
             // move around the args and call without the lock held
 #if N_ASYNC_USE_TASK_MANAGER
-            call_with_completed_args(completed_args, nullptr, threading::k_invalid_task_group, other);
+            call_with_completed_args(completed_args, tm, group_id, other);
 #else
             call_with_completed_args(completed_args, other);
 #endif
@@ -479,6 +489,21 @@ namespace neam::async
           }
         }
       }
+#if N_ASYNC_USE_TASK_MANAGER
+      void use_state(state& other)
+      {
+        return use_state(nullptr, threading::k_invalid_task_group, other);
+      }
+      void use_state(threading::task_manager& tm, threading::group_t group_id, state& other)
+      {
+        return use_state(&tm, group_id, other);
+      }
+      void use_state(threading::task_manager& tm, state& other)
+      {
+        return use_state(&tm, tm.get_current_group(), other);
+      }
+#endif
+
 
       /// \brief Chain from a potentially not-contructed state
       /// This allows for flat (co_await style) code:
@@ -499,11 +524,6 @@ namespace neam::async
 #endif
         Func&& cb) -> auto
       {
-#if N_ASYNC_USE_TASK_MANAGER
-#define N_ASYNC_FWD_PARAMS tm, group_id,
-#else
-#define N_ASYNC_FWD_PARAMS
-#endif
         using ret_type = std::invoke_result_t<Func, Args...>;
         if constexpr (std::is_same_v<ret_type, void>)
         {
