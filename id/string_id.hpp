@@ -102,19 +102,24 @@ namespace neam
 
       /// \brief Slowly build from a string at runtime.
       /// \warning Slow. And may leave the string in the binary
-      constexpr static string_id _runtime_build_from_string(const char* const _str, const size_t len)
+      [[nodiscard]] constexpr static string_id _runtime_build_from_string(const char* const _str, const size_t len)
       {
 #if !N_STRIP_DEBUG
-        return string_id((id_t)ct::hash::fnv1a<64>(_str, len), _str, len);
+        return string_id((id_t)ct::hash::fnv1a<64>(_str, len)/*, _str, len*/);
 #else
         return string_id((id_t)ct::hash::fnv1a<64>(_str, len));
 #endif
       };
 
+      constexpr static string_id _runtime_build_from_string(id_t prev, const char* const _str, const size_t len)
+      {
+        return string_id((id_t)ct::hash::fnv1a_continue<64>((uint64_t)prev, _str, len));
+      };
+
     private:
       constexpr string_id(id_t rid) : id(rid) {}
 #if !N_STRIP_DEBUG
-      constexpr string_id(id_t rid, const char* _str, size_t _len) : id(rid), str(_str), str_length(_len) {}
+      consteval string_id(id_t rid, const char* _str, size_t _len) : id(rid), str(_str), str_length(_len) {}
 #endif
 
       const id_t id = id_t::none;
@@ -129,3 +134,25 @@ consteval neam::string_id operator ""_rid (const char* str, size_t len)
 {
   return neam::string_id::_runtime_build_from_string(str, len);
 }
+
+#if __has_include(<fmt/format.h>)
+#include <fmt/format.h>
+template <> struct fmt::formatter<neam::string_id>
+{
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(neam::string_id sid, FormatContext& ctx)
+  {
+#if !N_STRIP_DEBUG
+    if (sid.get_string())
+    {
+      return format_to(ctx.out(), "{}({})", (neam::id_t)sid, std::string_view(sid.get_string(), sid.get_string_length()));
+    }
+#endif
+
+    // fallback to formatting the id:
+    return format_to(ctx.out(), "{}", (neam::id_t)sid);
+  }
+};
+#endif
