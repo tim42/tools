@@ -31,7 +31,6 @@
 #define __N_6139159572450221341_1885311108_VK_ERRORS_HPP__
 
 #include <string>
-#include <sstream>
 #include <vulkan/vulkan.h>
 
 namespace neam
