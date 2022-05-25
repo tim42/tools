@@ -138,6 +138,8 @@ namespace neam::cr
         template<typename... Args>
         void log_fmt(severity s, format_string<Args...> str, Args&& ... args)
         {
+          if (!output.can_log(s))
+            return;
           if (!skip_lock)
             output.wait_for_lock();
           output.log_fmt(s, loc, str, std::forward<Args>(args)...);
