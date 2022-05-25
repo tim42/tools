@@ -110,6 +110,22 @@ namespace neam
         lock_flag.clear(std::memory_order_release);
       }
 
+      /// \brief unlock the lock, but don't check if the thread has lock ownership
+      void _unlock()
+      {
+#if N_ENABLE_LOCK_DEBUG
+        check_for_key();
+        if (!lock_flag.test())
+        {
+          printf("[spinlock: invalid unlock detected in unlock() (unlocking an unlocked mutex)]\n");
+          abort();
+        }
+
+        owner_id = std::thread::id();
+#endif
+        lock_flag.clear(std::memory_order_release);
+      }
+
       /// \brief Does not lock the lock, simply wait for the lock to be unlocked
       /// \note marked as advaced: the lock _was_ unlocked at some point,
       ///       but this operation does not prevent any other thread to lock the lock and modify the protected data
@@ -123,7 +139,10 @@ namespace neam
           abort();
         }
 #endif
-        while (lock_flag.test(std::memory_order_acquire));
+        while (lock_flag.test(std::memory_order_acquire))
+        {
+          while (_relaxed_test());
+        }
       }
 
       bool _get_state() const
@@ -161,5 +180,109 @@ namespace neam
 
       }
 #endif
+  };
+
+  /// \brief A simple shared spinlock that favor writers
+  class shared_spinlock
+  {
+    public:
+      bool try_lock_exclusive(bool wait_shared = true)
+      {
+        if (!exclusive_lock.try_lock())
+        {
+          return false;
+        }
+
+        if (shared_count.load(std::memory_order_seq_cst) != 0)
+        {
+          if (wait_shared)
+          {
+            do
+            {
+              while (shared_count.load(std::memory_order_relaxed) != 0);
+            }
+            while (shared_count.load(std::memory_order_acquire) != 0);
+          }
+          else
+          {
+            exclusive_lock.unlock();
+            return false;
+          }
+        }
+        return true;
+      }
+
+      void lock_exclusive()
+      {
+        exclusive_lock.lock();
+
+        // wait for the shared lock to be released:
+        if (shared_count.load(std::memory_order_seq_cst) != 0)
+        {
+          do
+          {
+            while (shared_count.load(std::memory_order_relaxed) != 0);
+          }
+          while (shared_count.load(std::memory_order_acquire) != 0);
+        }
+      }
+
+      void unlock_exclusive()
+      {
+        exclusive_lock.unlock();
+      }
+
+      void lock_shared()
+      {
+        // wait for the exclusive lock to be release:
+        exclusive_lock._wait_for_lock();
+
+        // try to increment the shared lock:
+        shared_count.fetch_add(1, std::memory_order_acquire);
+        if (exclusive_lock._get_state())
+        {
+          shared_count.fetch_sub(1, std::memory_order_release);
+
+          // we got a race condition on the lock, so we release the shared lock and try again:
+          // this is not recursion.
+          return lock_shared();
+        }
+      }
+
+      void unlock_shared()
+      {
+        [[maybe_unused]] const int32_t ret = shared_count.fetch_sub(1, std::memory_order_release);
+#if N_ENABLE_LOCK_DEBUG
+        if (ret < 0)
+        {
+          printf("[shared_spinlock: invalid unlock: double/invalid shared unlock detected]\n");
+          abort();
+        }
+#endif
+      }
+
+    private:
+      spinlock exclusive_lock;
+      std::atomic<int32_t> shared_count = 0;
+  };
+
+  /// \brief adapter for lock_guard (exclusive version)
+  class spinlock_exclusive_adapter
+  {
+    public:
+      static spinlock_exclusive_adapter& adapt(shared_spinlock& sl) { return reinterpret_cast<spinlock_exclusive_adapter&>(sl); }
+
+      void lock() { reinterpret_cast<shared_spinlock*>(this)->lock_exclusive(); }
+      void unlock() { reinterpret_cast<shared_spinlock*>(this)->unlock_exclusive(); }
+  };
+
+  /// \brief adapter for lock_guard (shared version)
+  class spinlock_shared_adapter
+  {
+    public:
+      static spinlock_shared_adapter& adapt(shared_spinlock& sl) { return reinterpret_cast<spinlock_shared_adapter&>(sl); }
+
+      void lock() { reinterpret_cast<shared_spinlock*>(this)->lock_shared(); }
+      void unlock() { reinterpret_cast<shared_spinlock*>(this)->unlock_shared(); }
   };
 } // namespace neam
