@@ -211,7 +211,7 @@ int main(int, char**)
         // but it's possible to have nested disptaches.
         if (e % 512 == 0)
         {
-          threading::for_each(tm, gid, out_data, [&e](uint32_t& sub_e, size_t idx)
+          threading::for_each(tm, gid, out_data, [&e](uint32_t& sub_e, size_t /*idx*/)
           {
             e += sub_e;
           }, 64);

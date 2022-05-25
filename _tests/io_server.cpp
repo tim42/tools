@@ -10,9 +10,6 @@
 
 using namespace neam;
 
-static std::atomic<int> _thid = 0;
-const thread_local int thread_id = _thid++;
-
 struct global_options
 {
   // options
