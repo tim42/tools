@@ -1,6 +1,8 @@
 
 #include "logger.hpp"
 
+#include <regex>
+
 #if __has_include(<fmt/format.h>)
   #include <filesystem>
   #include <fmt/format.h>
@@ -13,14 +15,28 @@ namespace neam::cr
 {
   logger out;
 
+  static std::vector<std::string> split_string(const std::string& input, const std::string& regex)
+  {
+    // passing -1 as the submatch index parameter performs splitting
+    std::regex re(regex);
+    std::sregex_token_iterator
+        first{input.begin(), input.end(), re, -1},
+        last;
+    return {first, last};
+  }
+
   void logger::log_str(severity s, const std::string& str, std::source_location loc)
   {
     if (!can_log(s))
       return;
 
-    for (auto&& it : callbacks)
+    const auto lines = split_string(str, "\n");
+    for (const auto& line : lines)
     {
-      it.fnc(it.data, s, str, loc);
+      for (auto&& it : callbacks)
+      {
+        it.fnc(it.data, s, line, loc);
+      }
     }
   }
 
