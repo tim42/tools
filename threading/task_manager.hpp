@@ -51,11 +51,20 @@ namespace neam::threading
         non_transient_tasks.pool_debug_name = "task_manager::non_transient_tasks pool";
       }
 
+      /// \brief The frame lock will prevent the task graph from advancing keeping it locked in its current state.
+      /// The only task group that can run is the non_transient_tasks
+      /// Usefull during the app boot process to prevent task group to run while core resources are not yet loaded
+      spinlock& get_frame_lock()
+      {
+        return frame_state.frame_lock;
+      }
+
     public: // task group stuff. WARNING MUST BE CALLED BEFORE ANY CALL TO get_task()
       /// \brief Add the compiled frame operations
       /// \warning MUST BE CALLED BEFORE ANY OTHER OPERATION CAN BE DONE ON THE task_manager
       /// \warning NOT THREAD SAFE
       void add_compiled_frame_operations(resolved_graph&& _frame_ops);
+
 
       bool has_group(id_t id) const
       {
@@ -201,7 +210,7 @@ namespace neam::threading
       struct group_info_t
       {
         static constexpr uint32_t k_task_to_run_size = 8;
-        cr::ring_buffer<task*, 2048> tasks_to_run[k_task_to_run_size];
+        cr::ring_buffer<task*, 32768> tasks_to_run[k_task_to_run_size];
         std::atomic<uint32_t> insert_buffer_index = 0;
         std::atomic<uint32_t> remaining_tasks = 0;
         std::atomic<bool> is_completed = false;
@@ -234,6 +243,10 @@ namespace neam::threading
         std::atomic<uint32_t> global_state_key = 0;
 
         uint32_t frame_key = 0;
+
+        // used to stop the frame from progressing
+        // (usefull during the boot process)
+        spinlock frame_lock;
       };
       frame_state_t frame_state;
 
