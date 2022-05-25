@@ -70,10 +70,10 @@ namespace neam::io
       if (const auto it = opened_fd.find(fid); it != opened_fd.end())
       {
         if (!it->second.file)
-          return 0;
+          return k_invalid_file_size;
         fd = it->second.fd;
         if (check::unx::n_check_success(fstat(fd, &st)) < 0)
-          return 0;
+          return k_invalid_file_size;
       }
     }
 
@@ -84,11 +84,12 @@ namespace neam::io
       if (!is_file_mapped(fid))
       {
         check::debug::n_check(is_file_mapped(fid), "Failed to open {}: file not mapped", fid);
-        return 0;
+        return k_invalid_file_size;
       }
 
-      if (check::unx::n_check_success(stat(get_c_filename(fid), &st)) < 0)
-        return 0;
+//       if (check::unx::n_check_code(stat(get_c_filename(fid), &st), "stat failed on file: {}", get_c_filename(fid)) < 0)
+      if (stat(get_c_filename(fid), &st) < 0)
+        return k_invalid_file_size;
     }
 
     // get the actual size from the stat structure:
@@ -96,7 +97,7 @@ namespace neam::io
     {
       size_t bytes;
       if (check::unx::n_check_success(ioctl(fd, BLKGETSIZE64, &bytes)) != 0)
-        return 0;
+        return k_invalid_file_size;
       return bytes;
     }
     else if (S_ISREG(st.st_mode))
@@ -104,7 +105,7 @@ namespace neam::io
       return st.st_size;
     }
 
-    return 0;
+    return k_invalid_file_size;
   }
 
   void context::force_close_all_fd(bool include_sockets)
@@ -120,7 +121,7 @@ namespace neam::io
     for (auto& it : temp_fd)
     {
       if (include_sockets || !it.second.socket)
-        close(it.first);
+        _unlocked_close(it.first);
       else
         opened_fd.emplace_hint(opened_fd.end(), it.first, it.second);
     }
@@ -143,26 +144,30 @@ namespace neam::io
 
 
 
-  id_t context::register_socket(int fd, bool accept)
+  id_t context::register_fd(file_descriptor fd)
   {
     // create an ID for the socket
-    constexpr uint64_t k_socket_id_flag = 0XF000000000000000;
-    const id_t id = (id_t)(k_socket_id_flag | fd);
+    constexpr uint64_t k_external_id_flag = 0XF000000000000000;
+//     const id_t id = (id_t)(k_external_id_flag | fd.fd);
+    const id_t id = (id_t)(k_external_id_flag | reinterpret_cast<uint64_t&>(fd));
 
     std::lock_guard<spinlock> _sl(fd_lock);
     opened_fd.erase(id); // just in case
-    opened_fd.emplace(id, file_descriptor
-    {
+    opened_fd.emplace(id, fd);
+
+    return id;
+  }
+
+  id_t context::register_socket(int fd, bool accept)
+  {
+    return register_fd({
       .fd = fd,
       .socket = true,
-      .file = false,
 
       .read = !accept,
       .write = !accept,
       .accept = accept,
     });
-
-    return id;
   }
 
   int context::_get_fd(id_t fid) const
@@ -188,6 +193,11 @@ namespace neam::io
   void context::close(id_t fid)
   {
     std::lock_guard<spinlock> _sl(fd_lock);
+    _unlocked_close(fid);
+  }
+
+  void context::_unlocked_close(id_t fid)
+  {
     const auto it = opened_fd.find(fid);
     if (it == opened_fd.end())
       return;
@@ -195,7 +205,6 @@ namespace neam::io
     opened_fd.erase(it);
     fd_to_be_closed.insert(fd);
   }
-
 
   id_t context::create_listening_socket(uint16_t port, uint32_t listen_addr, uint16_t backlog_connection_count)
   {
@@ -244,7 +253,26 @@ namespace neam::io
     return id;
   }
 
+  bool context::create_pipe(id_t& read, id_t& write)
+  {
+    int pipe_fds[2] = { -1, -1 };
+    if (check::unx::n_check_success(pipe(pipe_fds)) < 0)
+      return false;
 
+    read = register_fd({
+      .fd = pipe_fds[0],
+      .pipe = true,
+      .read = true,
+    });
+
+    write = register_fd({
+      .fd = pipe_fds[1],
+      .pipe = true,
+      .write = true,
+    });
+
+    return true;
+  }
 
   // query handling:
 
@@ -295,7 +323,11 @@ namespace neam::io
     queue_readv_operations();
     queue_writev_operations();
     queue_accept_operations();
-//     queue_connect_operations();
+    queue_connect_operations();
+
+    process_completed_queries();
+
+    process_deferred_operations();
 
     process_completed_queries();
   }
@@ -467,10 +499,11 @@ namespace neam::io
     return sqe;
   }
 
-  int context::open_file(id_t fid, bool read, bool write, bool truncate)
+  int context::open_file(id_t fid, bool read, bool write, bool truncate, bool& try_again)
   {
     check::debug::n_assert(read || write, "io::context: cannot open a file with neither read nor write flags.");
     off_t offset = 0;
+    try_again = false;
 
     std::lock_guard _fdl(fd_lock);
     if (const auto it = opened_fd.find(fid); it != opened_fd.end())
@@ -489,6 +522,12 @@ namespace neam::io
 
       if (reopen)
       {
+        if (!it->second.file)
+        {
+          check::debug::n_check(false, "io::context::open_file: cannot change read/write mode on {}: it's not a file", fid);
+          return -1;
+        }
+
         neam::cr::out().debug("io::context::open_file: reopening {} with a different mode", fid);
         read = read || it->second.read;
         write = write || it->second.write;
@@ -510,19 +549,27 @@ namespace neam::io
     std::lock_guard<spinlock> _ml(mapped_lock);
     if (auto it = mapped_files.find(fid); it != mapped_files.end())
     {
+      // avoid busting the fd limit
+      if (opened_fd.size() >= k_max_open_file_count)
+      {
+        try_again = true;
+        return -1;
+      }
+
       // compute the flags:
-      int flags = 0;
+      int flags = O_CLOEXEC; // our file fd (as compared to socket/pipe/... fd) are auto-managed, and should not be relied upon
       if (read && write)
-        flags = O_RDWR;
+        flags |= O_RDWR;
       else if (read)
-        flags = O_RDONLY;
+        flags |= O_RDONLY;
       else if (write)
         flags = O_WRONLY|O_CREAT;
 
       if (truncate)
         flags |= O_TRUNC;
 
-      const int fd = check::unx::n_check_code(open(it->second.c_str(), flags, 0644), "Failed to open {}", it->second.c_str());
+//       const int fd = check::unx::n_check_code(open(it->second.c_str(), flags, 0644), "Failed to open {}", it->second.c_str());
+      const int fd = open(it->second.c_str(), flags, 0644);
       if (offset != 0) // restore the offset
         lseek(fd, offset, SEEK_SET);
       neam::cr::out().debug("io::context::open_file: opening `{}` [read: {}, write: {}]", it->second.c_str(), read, write);
@@ -693,9 +740,12 @@ namespace neam::io
         const id_t fid = read_requests.requests.front().fid;
 
         // check if the file is opened, else open it:
-        const int fd = open_file(fid, true, false, false);
+        bool try_again;
+        const int fd = open_file(fid, true, false, false, try_again);
         if (fd < 0)
         {
+          if (try_again)
+            break;
           // fail all the queries for the same fid:
           while (!read_requests.requests.empty() && fid == read_requests.requests.front().fid)
           {
@@ -796,9 +846,12 @@ namespace neam::io
         const id_t fid = write_requests.requests.front().fid;
 
         // check if the file is opened, else open it:
-        const int fd = open_file(fid, false, true, write_requests.requests.front().offset == 0);
+        bool try_again;
+        const int fd = open_file(fid, false, true, write_requests.requests.front().offset == 0, try_again);
         if (fd < 0)
         {
+          if (try_again)
+            break;
           // fail all the queries for the same fid:
           while (!write_requests.requests.empty() && fid == write_requests.requests.front().fid)
           {
@@ -995,7 +1048,17 @@ namespace neam::io
     {
       state.complete(false);
     }
+  }
 
+  void context::process_deferred_operations()
+  {
+    while (deferred_requests.requests.size() > 0)
+    {
+      if (!deferred_requests.requests.front().state.is_canceled())
+        deferred_requests.requests.front().state.complete();
+
+      deferred_requests.requests.pop_front();
+    }
   }
 
   void context::process_write_completion(query& q, bool success)

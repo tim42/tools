@@ -32,6 +32,7 @@
 
 #include <liburing.h>
 
+#include <filesystem>
 #include <deque>
 #include <unordered_map>
 #include <unordered_set>
@@ -60,7 +61,8 @@ namespace neam::io
       // Max number of queries that can be merged together.
       // A too high value will cause the OS to outright reject the query.
       static constexpr unsigned k_max_iovec_merge = IOV_MAX;
-      static constexpr uint8_t k_max_cycle_to_close = 64;
+      static constexpr uint8_t k_max_cycle_to_close = 8;
+      static constexpr size_t k_max_open_file_count = 256;
 
     public:
       using read_chain = async::chain<raw_data&& /*data*/, bool /*success*/>;
@@ -71,7 +73,7 @@ namespace neam::io
       static constexpr size_t whole_file = ~uint64_t(0);
       static constexpr size_t append = ~uint64_t(0); // for writes only, indicate we want to append
 
-      explicit context(const unsigned _queue_depth = 32);
+      explicit context(const unsigned _queue_depth = k_max_open_file_count * 2);
 
       ~context();
 
@@ -116,7 +118,7 @@ namespace neam::io
       /// \note does not actually open a file, does not actually checks for a file existence
       ///       it simply "maps a file", and makes it visible to the context. Files are opened and closed
       ///       as needed.
-      id_t map_file(const std::string& path)
+      [[nodiscard]] id_t map_file(const std::string& path)
       {
         id_t fid = get_file_id(path);
         std::string filename = fmt::format("{}{}{}", prefix_directory, (prefix_directory.empty() ? "" : "/"), path);
@@ -126,7 +128,7 @@ namespace neam::io
         return fid;
       }
 
-      id_t map_unprefixed_file(std::string path)
+      [[nodiscard]] id_t map_unprefixed_file(std::string path)
       {
         id_t fid = get_file_id(path);
 
@@ -168,12 +170,14 @@ namespace neam::io
       /// \warning order of reads is not guaranteed unless reads are on contiguous chunks of data
       ///          (contiguous: offset + size = next_read_offset)
       ///          (in this case the order will be from the lowest offset to the highest one, not the submission order)
-      read_chain queue_read(id_t fid, size_t offset, size_t size, bool do_not_call_process = false)
+      [[nodiscard]] read_chain queue_read(id_t fid, size_t offset, size_t size, bool do_not_call_process = false)
       {
         check::debug::n_assert(size > 0, "Reads of size 0 are invalid");
 
         if (size == whole_file)
           size = get_file_size(fid);
+        if (size == k_invalid_file_size)
+          return read_chain::create_and_complete({}, false);
 
         read_chain ret;
         const size_t pending_size = read_requests.add_request({fid, offset, size, ret.create_state()});
@@ -194,6 +198,8 @@ namespace neam::io
       write_chain queue_write(id_t fid, size_t offset, raw_data&& data, bool do_not_call_process = false)
       {
         check::debug::n_assert(data.size > 0, "Writes of size 0 are invalid");
+        if (data.size == 0 )
+          return write_chain::create_and_complete(false);
 
         write_chain ret;
         const size_t pending_size = write_requests.add_request({fid, offset, std::move(data), ret.create_state()});
@@ -205,8 +211,9 @@ namespace neam::io
         return ret;
       }
 
+      static constexpr size_t k_invalid_file_size = ~size_t(0);
       /// \brief returns on-disk size of the file
-      size_t get_file_size(id_t fid);
+      [[nodiscard]] size_t get_file_size(id_t fid);
 
       std::string_view get_filename(id_t fid) const
       {
@@ -240,13 +247,13 @@ namespace neam::io
       }
 
       /// \brief Create a socket + call bind/listen on it.
-      id_t create_listening_socket(uint16_t port = 0, uint32_t listen_addr = ipv4(0, 0, 0, 0) /*INADDR_ANY*/, uint16_t backlog_connection_count = 16);
+      [[nodiscard]] id_t create_listening_socket(uint16_t port = 0, uint32_t listen_addr = ipv4(0, 0, 0, 0) /*INADDR_ANY*/, uint16_t backlog_connection_count = 16);
 
       /// \brief Create a socket + (for use with queue_connect)
-      id_t create_socket();
+      [[nodiscard]] id_t create_socket();
 
       /// \brief connect to a host. Return whether the connect has succeeded or not.
-      connect_chain queue_connect(id_t fid, std::string host, bool do_not_call_process = false)
+      [[nodiscard]] connect_chain queue_connect(id_t fid, std::string host, bool do_not_call_process = false)
       {
         connect_chain ret;
         const size_t pending_size = connect_requests.add_request({fid, _get_fd(fid), std::move(host), ret.create_state()});
@@ -260,11 +267,11 @@ namespace neam::io
 
       /// \brief Returns the socket's port or 0 if not valid
       /// Usefull when passing 0 to the create_listening_socket port
-      uint16_t get_socket_port(id_t sid) const;
+      [[nodiscard]] uint16_t get_socket_port(id_t sid) const;
 
       /// \brief Accept a connection.
       /// Return the new connection id (or invalid)
-      accept_chain queue_accept(id_t fid, bool do_not_call_process = false)
+      [[nodiscard]] accept_chain queue_accept(id_t fid, bool do_not_call_process = false)
       {
         accept_chain ret;
         const size_t pending_size = accept_requests.add_request({fid, _get_fd(fid), ret.create_state()});
@@ -275,6 +282,34 @@ namespace neam::io
         return ret;
       }
 
+    public: // misc stuff:
+      /// \brief Create a pipe, with a read-end and a write-end
+      /// \note if the return value is false, both read and write are unchanegd
+      bool create_pipe(id_t& read, id_t& write);
+
+    public: // deferred operations (not async, only deferred. Can be canceled)
+      async::continuation_chain _queue_deferred_operation()
+      {
+        async::continuation_chain ret;
+        deferred_requests.add_request({ ret.create_state() });
+        return ret;
+      }
+
+      /// \brief Queue a filesystem remove of the file
+      async::chain<bool> queue_deferred_remove(id_t file_id)
+      {
+        return _queue_deferred_operation().then([=, this]
+        {
+          if (!is_file_mapped(file_id))
+          {
+            return false;
+          }
+          std::error_code ec;
+          cr::out().debug("io::context: removing {}", get_filename(file_id));
+          std::filesystem::remove(get_filename(file_id), ec);
+          return !!ec;
+        });
+      }
 
     public: // advanced fd handling:
       /// \brief Force a close operation on all the fd (sockets and files)
@@ -282,6 +317,7 @@ namespace neam::io
 
       /// \brief Close a socket. No further operation can be done on it.
       void close(id_t fid);
+      void _unlocked_close(id_t fid);
 
       /// \brief return the underlying fd. Present here in the event stuff needs to be done on the socket itself that neam::io is not aware of
       int _get_fd(id_t fid) const;
@@ -295,6 +331,7 @@ namespace neam::io
                || read_requests.has_any_in_flight()
                || accept_requests.has_any_in_flight()
                || connect_requests.has_any_in_flight()
+               || deferred_requests.has_any_in_flight()
                ;
       }
 
@@ -305,6 +342,7 @@ namespace neam::io
                || read_requests.has_any_pending()
                || accept_requests.has_any_pending()
                || connect_requests.has_any_pending()
+               || deferred_requests.has_any_pending()
                ;
       }
 
@@ -360,6 +398,11 @@ namespace neam::io
         std::string addr;
 
         connect_chain::state state;
+      };
+
+      struct deferred_request
+      {
+        async::continuation_chain::state state;
       };
 
       template<typename RequestType>
@@ -429,27 +472,31 @@ namespace neam::io
         static query* allocate(id_t fid, type_t t, unsigned iovec_count);
       };
 
-      struct file_descriptor
+      struct alignas(id_t) file_descriptor
       {
         int fd;
 
         uint8_t counter = 0;
 
-        // type: (should be.. a 1bit enum ?)
-        bool socket: 1;
-        bool file: 1;
+        // type:
+        bool socket: 1 = false;
+        bool pipe: 1 = false;
+        bool file: 1 = false;
 
         // capabilities:
-        bool read: 1;
-        bool write: 1;
-        bool accept: 1; // cannot read or write
+        bool read: 1 = false;
+        bool write: 1 = false;
+        bool accept: 1 = false; // cannot read or write
       };
+      static_assert(sizeof(file_descriptor) == sizeof(id_t));
+      static_assert(alignof(file_descriptor) == alignof(id_t));
 
     private: // functions:
       io_uring_sqe* get_sqe(bool should_process);
 
-      int open_file(id_t fid, bool read, bool write, bool truncate);
+      int open_file(id_t fid, bool read, bool write, bool truncate, bool& try_again);
 
+      id_t register_fd(file_descriptor fd);
       id_t register_socket(int fd, bool accept);
 
       void process_completed_query(io_uring_cqe* cqe);
@@ -465,6 +512,7 @@ namespace neam::io
       void queue_writev_operations();
       void queue_accept_operations();
       void queue_connect_operations();
+      void process_deferred_operations();
 
 
       void process_write_completion(query& q, bool success);
@@ -498,6 +546,7 @@ namespace neam::io
       request<write_request> write_requests;
       request<accept_request> accept_requests;
       request<connect_request> connect_requests;
+      request<deferred_request> deferred_requests;
 
 
       static constexpr unsigned k_max_pending_queue_size = 20; // above this, it will trigger a process call()
