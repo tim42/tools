@@ -57,7 +57,10 @@ namespace neam::rle
     if (opt_st != nullptr)
       *opt_st = st;
     if (st == status::failure)
+    {
+      N_RLE_LOG_FAIL("failed to serialize {}", ct::type_name<T>.str);
       return {};
+    }
     return ec.to_raw_data();
   }
 

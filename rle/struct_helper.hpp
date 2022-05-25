@@ -171,6 +171,8 @@ namespace neam::rle
       const auto [version, success] = dc.decode<uint32_t>();
       if (!success || version < get_min_version() || version > get_version())
       {
+        N_RLE_LOG_FAIL("failed to deserialize {}: invalid struct version (success: {}, decoded-version: {}, min-version: {}, max-version: {})",
+                       ct::type_name<T>.str, success, version, get_min_version(), get_version());
         st = status::failure;
         return;
       }
@@ -232,6 +234,8 @@ namespace neam::rle
               }
               else
               {
+                N_RLE_LOG_FAIL("failed to deserialize {}: unable to upgrade struct to the final version (current version: {}, final version: {})",
+                               ct::type_name<T>.str, version_number, version);
                 st = status::failure;
               }
             }

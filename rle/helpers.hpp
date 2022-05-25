@@ -68,7 +68,7 @@ namespace neam::rle
         dc.skip(sizeof(T));
         return *v;
       }
-      N_RLE_LOG_FAIL("failed to deserialize {} (size {})", ct::type_name<T>.str, sizeof(T));
+      N_RLE_LOG_FAIL("failed to deserialize {} (type size: {}, data size: {})", ct::type_name<T>.str, sizeof(T), dc.get_size());
       st = status::failure;
       return {};
     }
@@ -105,15 +105,14 @@ namespace neam::rle
 
     static void encode(encoder& ec, const str_type& v, status&)
     {
-      memcpy(ec.encode_and_alocate<uint32_t>(v.size()), v.data(), v.size() * sizeof(CharT));
+      memcpy(ec.encode_and_alocate<uint32_t>(v.size() * sizeof(CharT)), v.data(), v.size() * sizeof(CharT));
     }
     static str_type decode(decoder& dc, status& st)
     {
       decoder subdc = dc.decode_and_skip<uint32_t>();
-      if (subdc.is_valid())
-      {
-        return { subdc.get_address<CharT>(), subdc.get_size() };
-      }
+      if (subdc.is_valid() && subdc.get_size()%sizeof(CharT) == 0)
+        return { subdc.get_address<CharT>(), subdc.get_size()/sizeof(CharT) };
+
       N_RLE_LOG_FAIL("failed to deserialize {}: decoder is not in a valid state", ct::type_name<str_type>.str);
       st = status::failure;
       return {};
@@ -185,10 +184,10 @@ namespace neam::rle
     {
       if (v.index() == std::variant_npos)
       {
-        ec.encode<uint32_t>(~0u);
+        ec.encode<uint32_t>(0);
         return;
       }
-      const uint32_t type_idx = (uint32_t)v.index();
+      const uint32_t type_idx = (uint32_t)v.index() + 1;
       ec.encode(type_idx);
       std::visit([&]<typename FT>(const FT& t)
       {
@@ -197,11 +196,15 @@ namespace neam::rle
     }
     static opt_type decode(decoder& dc, status& st)
     {
-      const auto [type_idx, success] = dc.decode<uint32_t>();
+      auto [type_idx, success] = dc.decode<uint32_t>();
       if (!success)
+      {
+        N_RLE_LOG_FAIL("failed to deserialize {}: could not decode type index", ct::type_name<opt_type>.str);
         return (st = status::failure), opt_type{};
+      }
 
-      if (type_idx == ~0u) return {};
+      if (type_idx == 0) return {};
+      --type_idx;
       if (type_idx >= sizeof...(T))
       {
         N_RLE_LOG_FAIL("failed to deserialize {}: type index ({}) is greater than the number of contained types", ct::type_name<opt_type>.str, type_idx);
@@ -259,13 +262,19 @@ namespace neam::rle
     static void encode(encoder& ec, const raw_data& v, status& /*st*/)
     {
       ec.encode<uint32_t>(v.size);
-      memcpy(ec.allocate(v.size), v.data.get(), v.size);
+      if (v.size > 0)
+      {
+        memcpy(ec.allocate(v.size), v.data.get(), v.size);
+      }
     }
     static raw_data decode(decoder& dc, status& st)
     {
       decoder subdc = dc.decode_and_skip<uint32_t>();
       if (!subdc.is_valid())
+      {
+        N_RLE_LOG_FAIL("failed to deserialize {}: decoder is not in a valid state", ct::type_name<raw_data>.str);
         return (st = status::failure), raw_data{};
+      }
 
       raw_data v = raw_data::allocate(subdc.get_size());
       memcpy(v.data.get(), subdc.get_address(), v.size);
@@ -348,7 +357,10 @@ namespace neam::rle
     {
       const auto [entry_count, success] = dc.decode<uint32_t>();
       if (!success)
+      {
+        N_RLE_LOG_FAIL("failed to deserialize {}: could not decode the entry count", ct::type_name<T>.str);
         return (st = status::failure), T{};
+      }
 
       T v;
       reserve(v, entry_count);
