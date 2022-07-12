@@ -95,6 +95,11 @@ namespace neam
     return specialize(id, _str.string);
   }
 
+  static constexpr id_t combine(id_t a, id_t b)
+  {
+    return (id_t)(std::to_underlying(a) ^ (std::to_underlying(b) + 0x9e3779b97f4a7c15 + (std::to_underlying(a) << 6) + (std::to_underlying(a) >> 2)));
+  }
+
   static constexpr uint32_t fold32(id_t id)
   {
     uint64_t uid = (uint64_t)id;
