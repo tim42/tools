@@ -30,6 +30,7 @@
 #pragma once
 
 #include <utility>
+#include <array>
 #include "ct_string.hpp"
 #include "ct_array.hpp"
 #include "hash/fnv1a.hpp"
