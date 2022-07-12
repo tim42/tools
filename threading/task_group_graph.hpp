@@ -159,7 +159,8 @@ N_METADATA_STRUCT(neam::threading::resolved_graph)
   <
     N_MEMBER_DEF(groups),
     N_MEMBER_DEF(chain_count),
-    N_MEMBER_DEF(opcodes)
+    N_MEMBER_DEF(opcodes),
+    N_MEMBER_DEF(debug_names)
   >;
 };
 
