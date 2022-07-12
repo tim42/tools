@@ -78,7 +78,7 @@ Tired of writing cmdline parsing stuff or having crappy args handling?
 ```
 struct global_options
 {
-  // options
+  // options (support integer/float types as well as strings)
   bool force = false;
   bool verbose = false;
   bool silent = false;
@@ -113,9 +113,37 @@ int main(int argc, char **argv)
 }
 ```
 
-## RLE
+## RLE / Serialization
 
 Previously persistence, now a fully C++23 RLE encoder with much less code and optional version handling (including automatic upgrades) capabilities.
+
+By default, without any extra support, rle is capable of serializing most STL containers (including std::array, std::vector, std::dequeu, std::{unordered_,}map, std::list, ...) and more genericly any container that more-or-less match the interface of those.
+It also has builtin support for std::tuple/std::pair, std::variant, std::optional, std::string.
+
+Generic struct/class support can be achieved by using the struct-metadata.
+
+Type metadata can be generated to make semi-deserialization/visitor-pattern possible without the actual type.
+See `struct_metadata/type_to_string.cpp` for an exemple of visitor pattern and generic deserialization.
+
+
+Serializing is as simple as doing:
+```
+some_type_t my_variable = /*...*/;
+neam::raw_data my_serialized_data = neam::rle::serialize(my_variable);
+```
+and deserialization:
+```
+some_type_t some_other_variable = neam::rle::deserialize<some_type_t>(my_serialized_data);
+
+// or in-place deserialization (only works for structs with deserialization metadata):
+// (this allows to both deserialize over an already constructed type or over non-copyable/non-movable types)
+neam::rle::in_place_deserialize(my_serialized_data, my_variable);
+```
+
+Metadata generation is done using:
+```
+neam::rle::serialization_metadata metadata = neam::rle::generate_metadata<some_type_t>();
+```
 
 ## Threading
 
