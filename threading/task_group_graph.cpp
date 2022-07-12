@@ -319,7 +319,7 @@ namespace neam::threading
     cr::out().debug("----resolved graph debug----");
     cr::out().debug(" groups:");
     for (const auto& it : groups)
-      cr::out().debug("  group {}: {}", it.second, it.first);
+      cr::out().debug("  group {}: {} {}", it.second, debug_names.at(it.second), it.first);
     cr::out().debug(" chain counts: {}", chain_count);
     cr::out().debug(" opcodes:");
     unsigned entry = 0;
@@ -334,10 +334,10 @@ namespace neam::threading
           cr::out().debug("   {:5}: end_chain", entry);
           break;
         case ir_opcode::execute_task_group:
-          cr::out().debug("   {:5}: execute_task_group {}", entry, it.arg);
+          cr::out().debug("   {:5}: execute_task_group {} ({})", entry, it.arg, debug_names.at(it.arg));
           break;
         case ir_opcode::wait_task_group:
-          cr::out().debug("   {:5}: wait_task_group {}", entry, it.arg);
+          cr::out().debug("   {:5}: wait_task_group {} ({})", entry, it.arg, debug_names.at(it.arg));
           break;
       }
       ++entry;
