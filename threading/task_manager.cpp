@@ -548,6 +548,16 @@ namespace neam::threading
     {
       TRACY_SCOPED_ZONE;
 
+      bool is_stopped = false;
+
+      // lock the frame lock if we have to stop (first so advance() can never happen)
+      if (frame_state.should_stop)
+      {
+        is_stopped = true;
+        frame_state.should_stop = false;
+        frame_state.frame_lock.lock();
+      }
+
       // lock the chains:
       for (uint16_t i = 0; i < frame_ops.chain_count; ++i)
       {
@@ -591,9 +601,16 @@ namespace neam::threading
         frame_state.chains[i].lock.unlock();
       }
 
+      if (is_stopped && frame_state.on_stopped)
+      {
+        frame_state.on_stopped();
+        frame_state.on_stopped = {};
+      }
+
       // set a new state key
       // Must be the last operation in order to unlock advance()
       frame_state.global_state_key.fetch_add(1, std::memory_order_release);
+
     }
     TRACY_FRAME_MARK_END_CSTR("task_manager/reset_state");
   }

@@ -59,6 +59,15 @@ namespace neam::threading
         return frame_state.frame_lock;
       }
 
+      /// \brief Will stop the task manager next frame
+      /// \note the frame_lock (get_frame_lock()) will be locked. Unlocking it will resume the operations.
+      /// \note long-duration tasks are not affected by this and can continue to run
+      void request_stop(function_t&& on_stopped)
+      {
+        frame_state.should_stop = true;
+        frame_state.on_stopped = std::move(on_stopped);
+      }
+
     public: // task group stuff. WARNING MUST BE CALLED BEFORE ANY CALL TO get_task()
       /// \brief Add the compiled frame operations
       /// \warning MUST BE CALLED BEFORE ANY OTHER OPERATION CAN BE DONE ON THE task_manager
@@ -247,6 +256,8 @@ namespace neam::threading
         // used to stop the frame from progressing
         // (usefull during the boot process)
         spinlock frame_lock;
+        function_t on_stopped;
+        bool should_stop = false;
       };
       frame_state_t frame_state;
 
