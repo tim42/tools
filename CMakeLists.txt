@@ -27,8 +27,10 @@ add_library(ntools
     threading/task.cpp
     threading/task_group_graph.cpp
     threading/task_manager.cpp
+    rle/serialization_metadata.cpp
+    rle/generic_type.cpp
+    struct_metadata/type_to_string.cpp
     memory.cpp
-    log_type.cpp
 
     ${io_srcs}
     test.cpp
@@ -55,7 +57,7 @@ if(MSVC)
   set(NTOOLS_FLAGS /W4 /WX /std:c++latest)
 else()
   # It has to be 2b or kdevelop refuses to parse .cpp files
-  set(NTOOLS_FLAGS -Wall -Wextra -std=gnu++2b)
+  set(NTOOLS_FLAGS -Wall -Wextra -std=gnu++2b -Wno-invalid-offsetof  -Wno-unused-parameter)
 endif()
 
 target_compile_options(ntools PRIVATE ${NTOOLS_FLAGS})

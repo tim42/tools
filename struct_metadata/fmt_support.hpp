@@ -26,13 +26,15 @@
 
 #pragma once
 
-// Add support for standardized fmt output
+// Add support for standardized fmt output for ANY struct/class that can be serialized
+// (it cannot be a container, only a struct/class with metadata)
+//
+// To serialize any other type, call neam::type_to_string(your value here).
+// The helper in this file is simply a short-hand for serializable structs
 
-#include "struct_metadata.hpp"
-#include "../type_id.hpp"
-#include "../ct_list.hpp"
 
 #if __has_include(<fmt/format.h>)
+#include "type_to_string.hpp"
 #include <fmt/format.h>
 template<neam::metadata::concepts::StructWithMetadata Struct> struct fmt::formatter<Struct>
 {
@@ -41,33 +43,7 @@ template<neam::metadata::concepts::StructWithMetadata Struct> struct fmt::format
   template <typename FormatContext>
   auto format(const Struct& v, FormatContext& ctx)
   {
-    using namespace neam;
-
-    format_to(ctx.out(), "{{ ");
-    [&v, &ctx]<size_t... Indices>(std::index_sequence<Indices...>)
-    {
-      ([&v, &ctx]<size_t Index>()
-      {
-        using member = ct::list::get_type<n_metadata_member_list<Struct>, Index>;
-        using member_type = typename member::type;
-
-        format_to(ctx.out(), " {}  = {},", /*ct::type_name<member_type>.str, */member::name.string, member_at<member_type, member::offset>(v));
-      } .template operator()<Indices>(), ...);
-    }(std::make_index_sequence<ct::list::size<n_metadata_member_list<Struct>>> {});
-    return format_to(ctx.out(), " }}");
-  }
-
-  template<typename MT, size_t Offset>
-  static MT& member_at(Struct& v)
-  {
-    uint8_t* ptr = reinterpret_cast<uint8_t*>(&v);
-    return *reinterpret_cast<MT*>(ptr + Offset);
-  }
-  template<typename MT, size_t Offset>
-  static const MT& member_at(const Struct& v)
-  {
-    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&v);
-    return *reinterpret_cast<const MT*>(ptr + Offset);
+    return format_to(ctx.out(), "{}", neam::metadata::type_to_string<Struct>(v));
   }
 };
 
