@@ -60,5 +60,14 @@ namespace neam
       memcpy(ret.data.get(), other.data.get(), other.size);
       return ret;
     }
-  };
+
+    /// \brief duplicate some pointer + size data.
+    static raw_data duplicate(const void* data, size_t size)
+    {
+      if (data == nullptr || !size)
+        return {};
+      raw_data ret = allocate(size);
+      memcpy(ret.data.get(), data, size);
+      return ret;
+    }  };
 }
