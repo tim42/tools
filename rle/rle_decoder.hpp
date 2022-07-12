@@ -117,6 +117,8 @@ namespace neam::rle
         return dc;
       }
 
+      uint64_t _get_offset() const { return offset; }
+
     private:
       const raw_data& data;
       uint64_t offset;
