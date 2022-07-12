@@ -26,6 +26,7 @@
 #include <initializer_list>
 #include <type_traits>
 #include <utility>
+#include <algorithm>
 #include <memory>
 #include <vector>
 #include <stdexcept>
