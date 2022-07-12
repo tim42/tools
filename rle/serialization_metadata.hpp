@@ -61,13 +61,26 @@ namespace neam::rle
     static constexpr uint32_t current_version = 0;
 
     type_mode mode;
-    uint32_t size; // optional, only for raw or tuple types. Always in byte.
+
+    // optional, only for raw or tuple types. Always in byte.
+    // NOTE: for tuples, it is the actual size of the underlying C++ sturct, not the size of the serialized data
+    uint32_t size;
 
     // tuple, container and variant have entries there
+    // for tuple, they are in order of serialization
     std::vector<type_reference> contained_types = {};
 
     std::string name = {}; // filled by add_type
     type_hash_t hash = 0; // filled by add_type
+
+    // Version of the type. Only if the versionned flag is present.
+    // TODO: support metadata for older versions too.
+    uint32_t version = 0;
+
+    // if not empty, the default value of the type
+    // prefer get_default_value() as using this one as it will always provide a value
+    // FIXME:
+//     raw_data default_value = {};
 
     static type_metadata from(type_mode mode, const std::vector<type_reference>& refs, type_hash_t hash = 0)
     {
@@ -83,6 +96,10 @@ namespace neam::rle
     {
       return { mode, 0, contained_types, {}, (mode == type_mode::raw ? hash : 0) };
     }
+
+    /// \brief Encode the default value in ec.
+    /// \note Will always provide a valid default value.
+    void get_default_value(const struct serialization_metadata& md, encoder& ec) const;
 
     friend std::weak_ordering operator <=> (const type_metadata& a, const type_metadata& b)
     {
@@ -176,6 +193,8 @@ namespace neam::rle
     }
     return true;
   }
+
+
 }
 
 N_METADATA_STRUCT(neam::rle::type_reference)
@@ -193,9 +212,11 @@ N_METADATA_STRUCT(neam::rle::type_metadata)
   <
     N_MEMBER_DEF(hash),
     N_MEMBER_DEF(size),
+    N_MEMBER_DEF(version),
     N_MEMBER_DEF(mode),
     N_MEMBER_DEF(name),
-    N_MEMBER_DEF(contained_types)
+    N_MEMBER_DEF(contained_types)/*,*/
+//     N_MEMBER_DEF(default_value)
   >;
 };
 

@@ -260,7 +260,13 @@ namespace neam::rle
         }.template operator()<Indices>(), ...);
       } (std::make_index_sequence<ct::list::size<typename n_metadata_member_definitions<T>::member_list>> {});
 
-      mt.add_type<T>({ type_mode::versioned_tuple, sizeof(T), std::move(contained_types) });
+      mt.add_type<T>(
+      {
+        .mode = type_mode::versioned_tuple,
+        .size = sizeof(T),
+        .contained_types = std::move(contained_types),
+        .version = get_version(),
+      });
     }
   };
 }
