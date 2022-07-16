@@ -26,8 +26,12 @@
 
 #pragma once
 
+#include <tuple>
+
 namespace neam::cr
 {
+  /// \brief Construct a container from a list of move-only objects
+  /// usage: \code construct<std::vector<int>>(a, b, c); \endcode
   template<typename Cont, typename... Types>
   auto construct(Types &&... v)
   {
@@ -35,6 +39,9 @@ namespace neam::cr
     (r.push_back(std::forward<Types>(v)), ...);
     return r;
   }
+
+  /// \brief Construct a container from a list of move-only objects
+  /// usage: \code construct<std::vector>(a, b, c); \endcode
   template<template<typename...> typename Cont, typename Type, typename... Types>
   auto construct(Type&& v0, Types &&... v)
   {
@@ -43,5 +50,21 @@ namespace neam::cr
     (r.push_back(std::forward<Types>(v)), ...);
     return r;
   }
-}
 
+  template<typename Fnc, typename... Args>
+  void for_each(std::tuple<Args...>& t, Fnc&& fnc)
+  {
+    std::apply([&](auto&&... args)
+    {
+      (fnc(std::forward<Args>(args)), ...);
+    }, t);
+  }
+  template<typename Fnc, typename... Args>
+  void for_each(const std::tuple<Args...>& t, Fnc&& fnc)
+  {
+    std::apply([&](auto&&... args)
+    {
+      (fnc(args), ...);
+    }, t);
+  }
+}
