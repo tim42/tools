@@ -30,7 +30,9 @@ add_library(ntools
     rle/serialization_metadata.cpp
     rle/generic_type.cpp
     struct_metadata/type_to_string.cpp
+
     memory.cpp
+    sys_utils.cpp
 
     ${io_srcs}
     test.cpp
