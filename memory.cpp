@@ -34,7 +34,7 @@
   #ifdef HAS_LIBHUGETLBFS
     #include <hugetlbfs.h>
   #endif
-#elif define(_WIN32)
+#elif defined(_WIN32)
   #include <windows.h>
   #include <memoryapi.h>
 
