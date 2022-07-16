@@ -283,7 +283,7 @@ namespace neam::rle
 
     static void generate_metadata(serialization_metadata& mt)
     {
-      mt.add_type<raw_data>({ type_mode::container, 0, { mt.ref<uint8_t>() } });
+      mt.add_type<raw_data>({ type_mode::container, 0, cr::construct<std::vector>( mt.ref<uint8_t>() ) });
       coder<uint8_t>::generate_metadata(mt);
     }
   };
@@ -345,7 +345,7 @@ namespace neam::rle
 
     static void add(T&v, value_type&& vt, unsigned) requires concepts::EmplaceHintContainer<T> { v.emplace_hint(v.end(), std::move(vt)); }
     static void add(T&v, value_type&& vt, unsigned) requires concepts::EmplaceBackContainer<T> { v.emplace_back(std::move(vt)); }
-    static void add(T&v, value_type&& vt, unsigned i) requires concepts::IndexableAssignable<T> { v[i] = (std::move(vt)); }
+    static void add(T&v, value_type&& vt, unsigned i) requires (concepts::IndexableAssignable<T> && !(concepts::EmplaceBackContainer<T> || concepts::EmplaceBackContainer<T>)) { v[i] = (std::move(vt)); }
 
     static void encode(encoder& ec, const T& v, status& st)
     {

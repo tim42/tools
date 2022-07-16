@@ -32,14 +32,66 @@
 #include <map>
 
 #include "enum.hpp"
+#include "concepts.hpp"
 #include "../struct_metadata/struct_metadata.hpp"
 #include "../type_id.hpp" // for type_hash
+#include "../id/id.hpp" // for id_t
+#include "../id/string_id.hpp" // for string_id
+#include "../container_utils.hpp" // for for_each
 
 namespace neam::rle
 {
+  // FIXME: a forward decl header:
+  template<typename T> static T deserialize(const raw_data& data, status* opt_st = nullptr);
+  template<typename T> static raw_data serialize(const T& v, status* opt_st = nullptr);
+
   using type_hash_t = uint64_t;
 
-  // A reference to a type
+  /// \brief Work around the non-copiability of raw_data
+  struct attribute_t
+  {
+    attribute_t() = default;
+    attribute_t(std::map<type_hash_t, raw_data> _attr) : attributes(std::move(_attr)) {}
+    attribute_t(attribute_t&&) = default;
+    attribute_t&operator = (attribute_t&&) = default;
+    attribute_t(const attribute_t& o)
+    {
+      for (const auto& it : o.attributes)
+        attributes.emplace_hint(attributes.end(), it.first, raw_data::duplicate(it.second));
+    }
+    attribute_t&operator = (const attribute_t& o)
+    {
+      if (&o == this) return *this;
+      attributes.clear();
+      for (const auto& it : o.attributes)
+        attributes.emplace_hint(attributes.end(), it.first, raw_data::duplicate(it.second));
+      return *this;
+    }
+
+
+    std::map<type_hash_t, raw_data> attributes = {};
+
+    bool has(type_hash_t h) const { return attributes.contains(h); }
+    template<typename T> bool has() const { return attributes.contains(ct::type_hash<std::remove_cv_t<T>>); }
+    const raw_data* get(type_hash_t h) const
+    {
+      if (auto it = attributes.find(h); it != attributes.end())
+        return &it->second;
+      return nullptr;
+    }
+    template<typename T>
+    T get() const
+    {
+      if (const raw_data* rd = get(ct::type_hash<std::remove_cv_t<T>>); rd != nullptr)
+        return rle::deserialize<T>(*rd);
+      return {};
+    }
+  };
+
+  /// \brief A reference to a type
+  /// \note also used to provide attributes to the type-reference
+  /// What attribute are provided are dependent on the encoder
+  ///   (and in case of a struct/class, provided by the user in N_MEMBER_DEF([member], attributes...) )
   struct type_reference
   {
     static constexpr uint32_t min_supported_version = 0;
@@ -47,18 +99,26 @@ namespace neam::rle
 
     type_hash_t hash;
     std::string name = {}; // optional, in structs (tuple) is the member name
+    id_t name_hash = id_t::none; // optional, set in structs (auto-constructed from the name)
 
+    // attributes handling:
+    attribute_t attributes {};
+
+
+    /// \brief Comparison is only done on type-hash. Anything specialized must be done by other means.
     friend auto operator <=> (const type_reference& a, const type_reference& b)
     {
       return a.hash <=> b.hash;
     }
   };
 
-  // Provide information regarding a type (including its full, canonical name)
+  /// \brief Provide information regarding a type (including its full, canonical name)
   struct type_metadata
   {
     static constexpr uint32_t min_supported_version = 0;
     static constexpr uint32_t current_version = 0;
+
+    static constexpr uint32_t k_invalid_index = ~0u;
 
     type_mode mode;
 
@@ -82,9 +142,9 @@ namespace neam::rle
     // FIXME:
 //     raw_data default_value = {};
 
-    static type_metadata from(type_mode mode, const std::vector<type_reference>& refs, type_hash_t hash = 0)
+    static type_metadata from(type_mode mode, std::vector<type_reference>&& refs, type_hash_t hash = 0)
     {
-      return { mode, 0, refs, {}, hash };
+      return { mode, 0, std::move(refs), {}, hash };
     }
     // raw:
     static type_metadata from(type_hash_t hash)
@@ -92,9 +152,29 @@ namespace neam::rle
       return { type_mode::raw, 0, {}, {}, hash };
     }
 
+    /// \brief Convert a type to a genereic representation of this type
+    /// \note All metadata is stripped from the type-references
     type_metadata to_generic() const
     {
-      return { mode, 0, contained_types, {}, (mode == type_mode::raw ? hash : 0) };
+      std::vector<type_reference> refs;
+      refs.reserve(contained_types.size());
+      for (const auto& it : contained_types)
+        refs.push_back({ it.hash, it.name, it.name_hash });
+      return { mode, 0, std::move(refs), {}, (mode == type_mode::raw ? hash : 0) };
+    }
+
+    /// \brief Return the index of the member that matches this name or k_invalid_index if not found
+    uint32_t find_member(id_t name) const
+    {
+      if (mode == type_mode::tuple || mode == type_mode::versioned_tuple)
+      {
+        for (uint32_t i = 0; i < contained_types.size(); ++i)
+        {
+          if (contained_types[i].name_hash == name)
+            return i;
+        }
+      }
+      return k_invalid_index;
     }
 
     /// \brief Encode the default value in ec.
@@ -164,12 +244,23 @@ namespace neam::rle
     template<typename T>
     static type_reference ref()
     {
-      return { hash_of<T>(), {} };
+      return { hash_of<T>(), {}, id_t::none, };
     }
     template<typename T>
     static type_reference ref(std::string member_name)
     {
-      return { hash_of<T>(), std::move(member_name) };
+      return { hash_of<T>(), std::move(member_name), string_id::_runtime_build_from_string(member_name.data(), member_name.size()), };
+    }
+    template<typename T, typename TypeInfo>
+    static type_reference ref(std::string member_name)
+    {
+      std::map<type_hash_t, raw_data> attr;
+      cr::for_each(TypeInfo::metadata_tuple, [&]<typename TIt>(const TIt& it)
+      {
+        if constexpr (concepts::SerializableStruct<TIt>)
+          attr.emplace(hash_of<TIt>(), rle::serialize(it));
+      });
+      return { hash_of<T>(), std::move(member_name), string_id::_runtime_build_from_string(member_name.data(), member_name.size()), std::move(attr), };
     }
   };
 
@@ -193,16 +284,24 @@ namespace neam::rle
     }
     return true;
   }
-
-
 }
+
+N_METADATA_STRUCT(neam::rle::attribute_t)
+{
+  using member_list = neam::ct::type_list
+  <
+    N_MEMBER_DEF(attributes)
+  >;
+};
 
 N_METADATA_STRUCT(neam::rle::type_reference)
 {
   using member_list = neam::ct::type_list
   <
     N_MEMBER_DEF(hash),
-    N_MEMBER_DEF(name)
+    N_MEMBER_DEF(name),
+    N_MEMBER_DEF(name_hash),
+    N_MEMBER_DEF(attributes)
   >;
 };
 

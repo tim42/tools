@@ -30,44 +30,10 @@
 #include "enum.hpp"
 
 #include "../struct_metadata/struct_metadata.hpp"
+#include "concepts.hpp"
 
 namespace neam::rle
 {
-  namespace concepts
-  {
-    /// \note You may want to match VersionedStruct instead, as it allows migrating old data
-    /// \note to keep forward compatibility, non-versionned structs are assumed to be at version 0. Layout change may result is bad behavior.
-    template<typename T>
-    concept SerializableStruct = metadata::concepts::StructWithMetadata<T>;
-
-    template<typename T>
-    concept StructHasPostDeserialize = requires(T v)
-    {
-      v.post_deserialize();
-    };
-
-    /// \brief Versioned structs allows to load old data and migrate it to the new data
-    /// It implies the existance of:
-    ///  static constexpr uint32_t min_supported_version = 0;
-    ///  static constexpr uint32_t current_version = 1; // will be written to data
-    ///  using version_list = ct::type_list< MyPreviousAwesomeStruct, MyAwesomeStruct >;
-    ///
-    ///  // optional, only if current version != min_supported_version
-    ///  // each struct (except the first) in the version list must have this function taking a r-value of the previous version
-    ///  // (note that the concept does not test this assumption, but it will fail to compile anyway)
-    ///  void migrate_from(MyPreviousAwesomeStruct &&prev);
-    template<typename T>
-    concept VersionedStruct = requires(T v)
-    {
-      requires SerializableStruct<T>;
-
-      typename std::integral_constant<uint32_t, T::min_supported_version>;
-      typename std::integral_constant<uint32_t, T::current_version>;
-      ct::list::size<typename T::version_list>;
-      requires std::same_as<ct::list::get_type<typename T::version_list, T::current_struct_version - 1>, T>;
-    };
-  }
-
   namespace internal
   {
     template<typename Type, size_t Offset, ct::string_holder Name>
@@ -256,7 +222,7 @@ namespace neam::rle
         {
           using member = ct::list::get_type<typename n_metadata_member_definitions<T>::member_list, Index>;
           coder<typename member::type>::generate_metadata(mt);
-          contained_types.push_back(mt.ref<typename member::type>(member::name.string));
+          contained_types.push_back(mt.ref<typename member::type, member>(member::name.string));
         }.template operator()<Indices>(), ...);
       } (std::make_index_sequence<ct::list::size<typename n_metadata_member_definitions<T>::member_list>> {});
 

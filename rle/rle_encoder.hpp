@@ -34,35 +34,36 @@ namespace neam::rle
   class encoder
   {
     public:
-      encoder(cr::memory_allocator& _ma) : ma(_ma) {}
-      encoder(encoder&& o) = default;
+      encoder(cr::memory_allocator& _ma) : ma(&_ma) {}
+      encoder(const encoder& o) = default;
+      encoder& operator = (const encoder& o) = default;
 
-      bool is_valid() const { return ma.has_failed(); }
+      bool is_valid() const { return ma != nullptr && ma->has_failed(); }
 
-      void* allocate(size_t count) { return ma.allocate(count); }
+      void* allocate(size_t count) { return ma->allocate(count); }
 
       template<typename SizeType = uint32_t>
       void encode(SizeType value)
       {
         static_assert(std::is_integral_v<SizeType>, "SizeType must be an integer type");
-        *(SizeType*)(ma.allocate(sizeof(SizeType))) = value;
+        *(SizeType*)(ma->allocate(sizeof(SizeType))) = value;
       }
 
       template<typename SizeType = uint32_t>
       void* encode_and_alocate(SizeType value)
       {
         static_assert(std::is_integral_v<SizeType>, "SizeType must be an integer type");
-        *(SizeType*)(ma.allocate(sizeof(SizeType))) = value;
-        return ma.allocate(value);
+        *(SizeType*)(ma->allocate(sizeof(SizeType))) = value;
+        return ma->allocate(value);
       }
 
       raw_data to_raw_data()
       {
-        const size_t size = ma.size();
-        return { raw_data::unique_ptr { ma.give_up_data() }, size};
+        const size_t size = ma->size();
+        return { raw_data::unique_ptr { ma->give_up_data() }, size};
       }
 
     private:
-      cr::memory_allocator& ma;
+      cr::memory_allocator* ma = nullptr;
   };
 }

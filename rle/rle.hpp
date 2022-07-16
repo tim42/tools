@@ -41,6 +41,7 @@
 #include "rle_encoder.hpp"
 #include "helpers.hpp"
 #include "struct_helper.hpp"
+#include "serialization_metadata.hpp"
 
 namespace neam::rle
 {
@@ -48,7 +49,7 @@ namespace neam::rle
 
   /// \brief Serialize. Returns an empty raw_data on failure
   template<typename T>
-  static raw_data serialize(const T& v, status* opt_st = nullptr)
+  static raw_data serialize(const T& v, status* opt_st/* = nullptr*/)
   {
     cr::memory_allocator ma;
     encoder ec(ma);
@@ -66,7 +67,7 @@ namespace neam::rle
 
   /// \brief Deserialize. Returns a default constructed object if it failed.
   template<typename T>
-  static T deserialize(const raw_data& data, status* opt_st = nullptr)
+  static T deserialize(const raw_data& data, status* opt_st/* = nullptr*/)
   {
     status st;
     if (opt_st == nullptr)

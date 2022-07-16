@@ -27,6 +27,7 @@
 #pragma once
 
 #include <type_traits>
+#include <tuple>
 #include "../ct_string.hpp"
 #include "../ct_list.hpp"
 
@@ -39,10 +40,10 @@
 
 #define N_DECLARE_STRUCT_TYPE_TPL(Struct, ...) using struct_type = Struct<__VA_ARGS__>
 
-#define N_MEMBER_DEF_EX(Struct, Member) ::neam::metadata::internal::member_definition<decltype(Struct::Member), offsetof(Struct, Member), #Member>
+#define N_MEMBER_DEF_EX(Struct, Member, ...) ::neam::metadata::internal::member_definition<decltype(Struct::Member), offsetof(Struct, Member), #Member __VA_OPT__(,) __VA_ARGS__>
 
 /// \brief Entry in the member_list type of serializable structs
-#define N_MEMBER_DEF(Member) ::neam::metadata::internal::member_definition<decltype(struct_type::Member), offsetof(struct_type, Member), #Member>
+#define N_MEMBER_DEF(Member, ...) ::neam::metadata::internal::member_definition<decltype(struct_type::Member), offsetof(struct_type, Member), #Member __VA_OPT__(,) __VA_ARGS__>
 
 namespace neam::metadata::internal
 {
@@ -52,7 +53,7 @@ namespace neam::metadata::internal
     using struct_type = std::remove_cv_t<T>;
   };
 
-  template<typename Type, size_t Offset, ct::string_holder Name>
+  template<typename Type, size_t Offset, ct::string_holder Name, auto... ExtraMetadata>
   struct member_definition
   {
     static constexpr size_t size = sizeof(Type);
@@ -62,6 +63,20 @@ namespace neam::metadata::internal
     static constexpr bool is_const = std::is_const_v<Type>;
     static constexpr bool is_volatile = std::is_volatile_v<Type>;
     static constexpr ct::string_holder name = Name;
+
+
+    struct metadata_t : public decltype(ExtraMetadata)::metadata...
+    {
+      metadata_t() : decltype(ExtraMetadata)::metadata(ExtraMetadata)... {}
+    };
+
+    /// \brief easy way for user to simply access a metadata from code:
+    /// usage: type_info.metadata.description ...
+    static const inline metadata_t metadata = {};
+
+    /// \brief easy way for code to iterate over all the different metadata (see cr::for_each (in container_utils.hpp)):
+    /// possible usage: cr::for_each(type_info.metadata_tuple, [](auto&& v) { ... });
+    static const inline std::tuple<typename decltype(ExtraMetadata)::metadata...> metadata_tuple { ExtraMetadata... };
   };
 }
 
@@ -74,7 +89,7 @@ namespace neam::metadata::concepts
   /// \brief A struct with metadata allows for an easy and semi-automatic serialization of compound types
   ///
   /// Here is a serializable struct:
-  ///
+  /// \code
   /// struct MyAwesomeStruct
   /// {
   ///   unsigned some_member = 0;
@@ -90,6 +105,30 @@ namespace neam::metadata::concepts
   ///     N_MEMBER(binary_blob),
   ///   >;
   /// };
+  /// \endcode
+  ///
+  /// Here is a serializable template struct:
+  /// \code
+  /// template<typename T, uint32_t V>
+  /// struct MyAwesomeStruct
+  /// {
+  ///   unsigned some_member = V;
+  ///   std::vector< std::map< T, SomeOtherStruct > > stuff;
+  ///   raw_data binary_blob;
+  /// };
+  ///
+  /// template<typename T, uint32_t V>
+  /// N_METADATA_STRUCT_TPL(MyAwesomeStruct, T, V)
+  /// {
+  ///   N_DECLARE_STRUCT_TYPE_TPL(MyAwesomeStruct, T, V);
+  ///   using member_list = ct::list
+  ///   <
+  ///     N_MEMBER(some_member),
+  ///     N_MEMBER(stuff),
+  ///     N_MEMBER(binary_blob),
+  ///   >;
+  /// };
+  /// \endcode
   template<typename T>
   concept StructWithMetadata = requires(T v)
   {
@@ -97,3 +136,4 @@ namespace neam::metadata::concepts
   };
 }
 
+#include "extra_metadata.hpp"

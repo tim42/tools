@@ -24,8 +24,6 @@
 // SOFTWARE.
 //
 
-#pragma once
-
 #include "rle.hpp"
 #include "generic_type.hpp"
 #include "../container_utils.hpp"

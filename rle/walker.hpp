@@ -85,6 +85,32 @@ namespace neam::rle
     public:
       using payload_arg_t = typename Formatter::payload_arg_t;
 
+    private: // utility
+      struct void_parameter_t {};
+      template<typename Fnc, typename... Args>
+      static auto safe_call_pre(Fnc&& fnc, Args&&... args)
+      {
+        constexpr bool k_is_void = std::is_same_v<void, std::invoke_result_t<Fnc, Args...>>;
+        if constexpr (k_is_void)
+        {
+          fnc(std::forward<Args>(args)...);
+          return void_parameter_t{};
+        }
+        else
+        {
+          return fnc(std::forward<Args>(args)...);
+        }
+      }
+      template<typename Fnc, typename R, typename... Args>
+      static auto safe_call_post(Fnc&& fnc, R&& r, Args&&... args)
+      {
+        constexpr bool k_is_void = std::is_same_v<void_parameter_t, std::remove_cvref_t<R>>;
+        if constexpr (k_is_void)
+          fnc(std::forward<Args>(args)...);
+        else
+          fnc(std::forward<Args>(args)..., std::forward<R>(r));
+      }
+
     public:
       /// \brief walk a full serialized data:
       static payload_arg_t walk(const raw_data& rd, const rle::serialization_metadata& md, payload_arg_t payload)
@@ -167,16 +193,16 @@ namespace neam::rle
 
         const uint32_t count = dc.decode<uint32_t>().first;
         const rle::type_metadata& sub_type = md.type(type.contained_types[0].hash);
-        Formatter::on_type_container_pre(md, type, payload, count, sub_type);
+        auto ret = safe_call_pre(Formatter::on_type_container_pre, md, type, payload, count, sub_type);
 
         for (uint32_t i = 0; i < count; ++i)
         {
-          Formatter::on_type_container_pre_entry(md, type, payload, i, count, sub_type);
+          safe_call_post(Formatter::on_type_container_pre_entry, ret, md, type, payload, i, count, sub_type);
           walk_type(md, sub_type, dc, payload);
-          Formatter::on_type_container_post_entry(md, type, payload, i, count, sub_type);
+          safe_call_post(Formatter::on_type_container_post_entry, ret, md, type, payload, i, count, sub_type);
         }
 
-        Formatter::on_type_container_post(md, type, payload, count, sub_type);
+        safe_call_post(Formatter::on_type_container_post, ret, md, type, payload, count, sub_type);
       }
       static void walk_type_variant(const rle::serialization_metadata& md, const rle::type_metadata& type, rle::decoder& dc, payload_arg_t payload)
       {
@@ -187,9 +213,9 @@ namespace neam::rle
           return Formatter::on_type_variant_empty(md, type, payload);
 
         const rle::type_metadata& sub_type = md.type(type.contained_types[index - 1].hash);
-        Formatter::on_type_variant_pre_entry(md, type, payload, index, sub_type);
+        auto ret = safe_call_pre(Formatter::on_type_variant_pre_entry, md, type, payload, index, sub_type);
         walk_type(md, sub_type, dc, payload);
-        Formatter::on_type_variant_post_entry(md, type, payload, index, sub_type);
+        safe_call_post(Formatter::on_type_variant_post_entry, ret, md, type, payload, index, sub_type);
       }
       static void walk_type_tuple(const rle::serialization_metadata& md, const rle::type_metadata& type, rle::decoder& dc, payload_arg_t payload)
       {
@@ -197,15 +223,15 @@ namespace neam::rle
         if (count == 0)
           return walk_type_empty(md, type, dc, payload);
 
-        Formatter::on_type_tuple_pre(md, type, payload, count);
+        auto ret = safe_call_pre(Formatter::on_type_tuple_pre, md, type, payload, count);
         for (uint32_t i = 0; i < count; ++i)
         {
           const rle::type_metadata& sub_type = md.type(type.contained_types[i].hash);
-          Formatter::on_type_tuple_pre_entry(md, type, payload, i, count, sub_type);
+          safe_call_post(Formatter::on_type_tuple_pre_entry, ret, md, type, payload, i, count, sub_type);
           walk_type(md, sub_type, dc, payload);
-          Formatter::on_type_tuple_post_entry(md, type, payload, i, count, sub_type);
+          safe_call_post(Formatter::on_type_tuple_post_entry, ret, md, type, payload, i, count, sub_type);
         }
-        Formatter::on_type_tuple_post(md, type, payload, count);
+        safe_call_post(Formatter::on_type_tuple_post, ret, md, type, payload, count);
       }
 
       static void walk_type_versioned_tuple(const rle::serialization_metadata& md, const rle::type_metadata& type, rle::decoder& dc, payload_arg_t payload)
