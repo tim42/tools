@@ -58,11 +58,12 @@ namespace neam
     /// \brief C-String + Size from array
     struct string
     {
-      string() = delete;
+      static constexpr string_t empty_string = "";
+      consteval string() : string(empty_string) {}
       ~string() noexcept = default;
 
       template<size_t N>
-      constexpr string(const char (&_str)[N]) noexcept : str(_str), size(N - 1) {}
+      consteval string(const char (&_str)[N]) noexcept : str(_str), size(N - 1) {}
       constexpr string(const string& o) noexcept : str(o.str), size(o.size) {}
       constexpr string(const char* _str, size_t _size) noexcept : str(_str), size(_size) {}
       template<size_t N>
@@ -130,6 +131,15 @@ namespace neam
       size_t size;
     };
 
+    /// \brief Acts as a valid way to store and reference strings inside template arguments:
+    /// usage: ct::string_storage<"my c string"> or c_string_t<"my c string">
+    template<string_holder h>
+    struct string_storage_t
+    {
+      static constexpr string_holder holder {h};
+      static constexpr const char (&string)[sizeof(holder.string)] { holder.string };
+    };
+
     namespace internal
     {
       // strlen function
@@ -164,5 +174,10 @@ namespace neam
     }
   } // namespace ct
 } // namespace neam
+
+/// \brief static storage for a C string litteral. Is a C array. (and thus can be used where size is to be deduced)
+template<neam::ct::string_holder h>
+constexpr const char (&c_string_t)[sizeof(h.string)] = neam::ct::string_storage_t<h>::string;
+
 
 #endif /*__CR_STRING_HPP__*/
