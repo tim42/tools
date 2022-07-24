@@ -61,8 +61,8 @@ namespace neam::io
       // Max number of queries that can be merged together.
       // A too high value will cause the OS to outright reject the query.
       static constexpr unsigned k_max_iovec_merge = IOV_MAX;
-      static constexpr uint8_t k_max_cycle_to_close = 8;
-      static constexpr size_t k_max_open_file_count = 256;
+      static constexpr uint8_t k_max_cycle_to_close = 6;
+      static constexpr size_t k_max_open_file_count = 384;
 
     public:
       using read_chain = async::chain<raw_data&& /*data*/, bool /*success*/>;
@@ -73,7 +73,7 @@ namespace neam::io
       static constexpr size_t whole_file = ~uint64_t(0);
       static constexpr size_t append = ~uint64_t(0); // for writes only, indicate we want to append
 
-      explicit context(const unsigned _queue_depth = k_max_open_file_count * 2);
+      explicit context(const unsigned _queue_depth = k_max_open_file_count);
 
       ~context();
 
@@ -173,6 +173,7 @@ namespace neam::io
       [[nodiscard]] read_chain queue_read(id_t fid, size_t offset, size_t size, bool do_not_call_process = false)
       {
         check::debug::n_assert(size > 0, "Reads of size 0 are invalid");
+        check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid read operation");
 
         if (size == whole_file)
           size = get_file_size(fid);
@@ -197,8 +198,9 @@ namespace neam::io
       ///          (in this case the order will be from the lowest offset to the highest one, not the submission order)
       write_chain queue_write(id_t fid, size_t offset, raw_data&& data, bool do_not_call_process = false)
       {
-        check::debug::n_assert(data.size > 0, "Writes of size 0 are invalid");
-        if (data.size == 0 )
+        check::debug::n_check(data.size > 0, "Writes of size 0 are invalid");
+        check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid write operation");
+        if (data.size == 0)
           return write_chain::create_and_complete(false);
 
         write_chain ret;
@@ -302,6 +304,7 @@ namespace neam::io
         {
           if (!is_file_mapped(file_id))
           {
+            cr::out().debug("io::context: could not remove {}: file not mapped", get_filename(file_id));
             return false;
           }
           std::error_code ec;
@@ -324,7 +327,8 @@ namespace neam::io
 
     public: // query handling:
       /// \brief Only include in-flight operations: operations submit to liburing
-      /// \see has_pending_operations (
+      /// \see has_pending_operations
+      /// \see get_in_flight_operations_count (slower)
       bool has_in_flight_operations() const
       {
         return write_requests.has_any_in_flight()
@@ -335,7 +339,8 @@ namespace neam::io
                ;
       }
 
-      /// \brief
+      /// \brief Return if the context has any pending operations (operations not yet sent to liburing)
+      /// \see get_pending_operations_count (slower)
       bool has_pending_operations() const
       {
         return write_requests.has_any_pending()
@@ -363,6 +368,36 @@ namespace neam::io
 
       /// \warning stall until there's something to do.
       void _wait_for_queries();
+
+    public: // stats:
+      /// \brief Return the total number of operations sent to liburing
+      /// \note slower than has_in_flight_operations
+      /// \see has_in_flight_operations
+      unsigned get_in_flight_operations_count() const
+      {
+        return write_requests.get_in_flight_count()
+               + read_requests.get_in_flight_count()
+               + accept_requests.get_in_flight_count()
+               + connect_requests.get_in_flight_count()
+               + deferred_requests.get_in_flight_count()
+               ;
+      }
+
+      /// \brief Return the total number of operations queued but not sent yet to liburing
+      /// \note slower than has_pending_operations
+      /// \see has_pending_operations
+      unsigned get_pending_operations_count() const
+      {
+        return write_requests.get_in_queued_count()
+               + read_requests.get_in_queued_count()
+               + accept_requests.get_in_queued_count()
+               + connect_requests.get_in_queued_count()
+               + deferred_requests.get_in_queued_count()
+               ;
+      }
+
+      uint64_t get_total_written_bytes() const { return stats_total_written_bytes.load(std::memory_order_relaxed); }
+      uint64_t get_total_read_bytes() const { return stats_total_read_bytes.load(std::memory_order_relaxed); }
 
     private: // data structure:
       struct read_request
@@ -433,6 +468,17 @@ namespace neam::io
         {
           std::lock_guard _l(lock);
           in_flight -= 1;
+        }
+
+        unsigned get_in_flight_count() const
+        {
+          std::lock_guard _l(lock);
+          return in_flight;
+        }
+        unsigned get_in_queued_count() const
+        {
+          std::lock_guard _l(lock);
+          return (unsigned)requests.size();
         }
       };
 
@@ -515,7 +561,7 @@ namespace neam::io
       void process_deferred_operations();
 
 
-      void process_write_completion(query& q, bool success);
+      void process_write_completion(query& q, bool success, size_t sz);
       void process_read_completion(query& q, bool success, size_t sz);
       void process_accept_completion(query& q, bool success, int ret);
       void process_connect_completion(query& q, bool success);
@@ -548,6 +594,9 @@ namespace neam::io
       request<connect_request> connect_requests;
       request<deferred_request> deferred_requests;
 
+
+      std::atomic<uint64_t> stats_total_read_bytes = 0;
+      std::atomic<uint64_t> stats_total_written_bytes = 0;
 
       static constexpr unsigned k_max_pending_queue_size = 20; // above this, it will trigger a process call()
 

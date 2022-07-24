@@ -338,22 +338,17 @@ namespace neam::io
       return;
     std::lock_guard<spinlock> _cl(completion_lock, std::adopt_lock);
 
-    while (true)
-    {
-      // batch process the completion queue:
-      io_uring_cqe* cqes[queue_depth];
-      const unsigned completed_count = io_uring_peek_batch_cqe(&ring, cqes, queue_depth);
+    // batch process the completion queue:
+    io_uring_cqe* cqes[queue_depth * 2];
+    const unsigned completed_count = io_uring_peek_batch_cqe(&ring, cqes, queue_depth * 2);
 
-      if (completed_count > 0)
-        cr::out().debug("process_completed_queries: {} completed queries", completed_count);
-      else
-        return;
+    if (completed_count > 0)
+      cr::out().debug("process_completed_queries: {} completed queries", completed_count);
+    else
+      return;
 
-      for (unsigned i = 0; i < completed_count; ++i)
-        process_completed_query(cqes[i]);
-
-      process();
-    }
+    for (unsigned i = 0; i < completed_count; ++i)
+      process_completed_query(cqes[i]);
   }
 
   void context::_wait_for_submit_queries(bool wait_for_everything)
@@ -483,18 +478,19 @@ namespace neam::io
     io_uring_sqe* const sqe = io_uring_get_sqe(&ring);
     if (sqe == nullptr)
     {
-      if (!should_process)
+      // FIXME:
+//      if (!should_process)
       {
         // (still) no space in queue, cannot do anything.
         neam::cr::out().debug("io::context::get_sqe: submit queue is full");
         return nullptr;
       }
-      else
-      {
-        // we have done stuff, process that and try again
-        process_completed_queries();
-        return get_sqe(false);
-      }
+//       else
+//       {
+//         // we have done stuff, process that and try again
+//         process_completed_queries();
+//         return get_sqe(false);
+//       }
     }
     return sqe;
   }
@@ -602,7 +598,9 @@ namespace neam::io
 
   void context::process_completed_query(io_uring_cqe* cqe)
   {
-    check::debug::n_assert(cqe != nullptr, "io::context::process_completed_queries: invalid null cqe");
+    check::debug::n_check(cqe != nullptr, "io::context::process_completed_queries: invalid null cqe");
+    if (cqe == nullptr)
+      return;
 
     query* const data = (query*)io_uring_cqe_get_data(cqe);
 
@@ -630,7 +628,7 @@ namespace neam::io
       {
         case query::type_t::close: break;
 
-        case query::type_t::write: process_write_completion(*data, cqe->res >= 0);
+        case query::type_t::write: process_write_completion(*data, cqe->res >= 0, cqe->res);
           write_requests.decrement_in_flight();
           break;
         case query::type_t::read: process_read_completion(*data, cqe->res >= 0, cqe->res);
@@ -657,16 +655,20 @@ namespace neam::io
     std::lock_guard _fdl(fd_lock);
     if (fd_to_be_closed.size() > 0)
       cr::out().debug("queue_close_operations_fd: {} pending close operations", fd_to_be_closed.size());
+    else
+      return true;
 
     bool has_done_any_delete = false;
     while (fd_to_be_closed.size() > 0)
     {
       const int fd = *fd_to_be_closed.begin();
-
       // Get a SQE
       io_uring_sqe* const sqe = get_sqe(has_done_any_delete);
       if (!sqe)
+      {
+        cr::out().debug("queue_close_operations_fd: done, incomplete");
         return false;
+      }
 
       has_done_any_delete = true;
       fd_to_be_closed.erase(fd_to_be_closed.begin());
@@ -675,6 +677,7 @@ namespace neam::io
       io_uring_sqe_set_data(sqe, nullptr);
       check::unx::n_check_success(io_uring_submit(&ring));
     }
+    cr::out().debug("queue_close_operations_fd: done !");
     return true;
   }
 
@@ -1061,8 +1064,11 @@ namespace neam::io
     }
   }
 
-  void context::process_write_completion(query& q, bool success)
+  void context::process_write_completion(query& q, bool success, size_t sz)
   {
+    if (success)
+      stats_total_written_bytes.fetch_add(sz, std::memory_order_relaxed);
+
     for (unsigned i = 0; i < q.iovec_count; ++i)
     {
 #if N_ASYNC_USE_TASK_MANAGER
@@ -1075,6 +1081,9 @@ namespace neam::io
 
   void context::process_read_completion(query& q, bool success, size_t sz)
   {
+    if (success)
+      stats_total_read_bytes.fetch_add(sz, std::memory_order_relaxed);
+
     for (unsigned i = 0; i < q.iovec_count; ++i)
     {
 #if N_ASYNC_USE_TASK_MANAGER
