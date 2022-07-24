@@ -346,23 +346,29 @@ namespace neam::threading
     return complexity > k_complexity_threshold;
   }
 
-  task* task_manager::get_task_to_run()
+  task* task_manager::get_task_to_run(bool exclude_long_duration)
   {
-
     thread_local group_t start_group = 1;
     if (frame_state.groups.empty() || frame_state.tasks_that_can_run.load(std::memory_order_acquire) == 0)
       return nullptr;
 
     TRACY_SCOPED_ZONE;
 
-    start_group += 1;
+    start_group += 7691;
+    const group_t start_index = start_group;
 
     for (group_t i = 0; i < frame_state.groups.size(); ++i)
     {
-
       // weak shuffle, but hey, it works
-      const group_t group_it = (start_group + i) % frame_state.groups.size();
+      // + prioritize any other task group over the non-transient one
+      const group_t group_it = i == frame_state.groups.size() - 1
+                               ? k_non_transient_task_group
+                               : (1 + ((start_index + i) % (frame_state.groups.size() - 1)));
+
       group_info_t& group_info = frame_state.groups[group_it];
+
+      if (exclude_long_duration && group_it == k_non_transient_task_group)
+        continue;
 
       // skip groups that are completed / have not started
       if (group_it != k_non_transient_task_group)
@@ -414,14 +420,14 @@ namespace neam::threading
   }
 
 
-  void task_manager::run_a_task()
+  void task_manager::run_a_task(bool exclude_long_duration)
   {
     // try to advance the state
     if (advance())
       return;
 
     // grab a random task and run it
-    task* ptr = get_task_to_run();
+    task* ptr = get_task_to_run(exclude_long_duration);
     if (ptr)
     {
       return do_run_task(*ptr);
@@ -445,6 +451,15 @@ namespace neam::threading
     // avoid looping forever, force to exit the function on frame-end
     while (original_frame_key == frame_state.frame_key)
     {
+      // While the frame-lock is present, we sleep. (sleep for 5ms to minimize cpu overhead).
+      // frame-lock is only ever used in those situations: startup, shutdown, non-interractive apps
+      // so it should be okay to give-up 5ms, and it could be even more.
+      // (the frame lock is effectively a freeze of the task-manager and using it means perfs are not critical)
+      while (frame_state.frame_lock._relaxed_test())
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+
       uint32_t spin_count = 0;
       for (; frame_state.tasks_that_can_run.load(std::memory_order_relaxed) == 0 && spin_count < k_max_spin_count; ++spin_count);
       if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
@@ -480,7 +495,7 @@ namespace neam::threading
 
     // we don't use the locked version here to avoid being locked-out during the task execution
     while (!t.unlock_is_completed())
-      run_a_task();
+      run_a_task(group != k_non_transient_task_group);
   }
 
   std::chrono::microseconds task_manager::run_tasks(std::chrono::microseconds duration)
@@ -538,6 +553,11 @@ namespace neam::threading
     if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
       return true;
     return false;
+  }
+
+  uint32_t task_manager::get_pending_tasks_count() const
+  {
+    return frame_state.tasks_that_can_run.load(std::memory_order_acquire);
   }
 
 

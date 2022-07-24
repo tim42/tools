@@ -138,7 +138,7 @@ namespace neam::threading
       ///       (possibly calling wait_for_a_task to avoid spining)
       ///
       /// \note most compilers will directly jump to the task (and not perform a call), so this function may not appear in callstacks
-      void run_a_task();
+      void run_a_task(bool exclude_long_duration = false);
 
       /// \brief Wait for a task that can be run.
       /// May decide to sleep the thread for a while if necessary to avoid hogging the CPU
@@ -171,6 +171,11 @@ namespace neam::threading
       /// This does not include tasks that are pending but whose task-group is not yet started
       bool has_pending_tasks() const;
 
+      /// \brief Return the number of pending tasks
+      /// \see has_pending_tasks
+      uint32_t get_pending_tasks_count() const;
+
+
     public: // state stuff, must be called from within a task (or have a task in scope)
             // WARNING: ALL THOSE FUNCTIONS MIGHT BREAK IF THERE ARE MULTIPLE TASK_MANAGERS
 
@@ -197,7 +202,7 @@ namespace neam::threading
 
       /// \brief Get a task to run
       /// \note The task is selected in a somewhat random fashion: the first task found is the selected one
-      task* get_task_to_run();
+      task* get_task_to_run(bool exclude_long_duration = false);
 
       void reset_state();
 
