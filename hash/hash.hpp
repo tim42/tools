@@ -46,7 +46,26 @@ namespace neam::ct
   }
   static constexpr uint32_t fold31(uint64_t id)
   {
-    return uint32_t(((id >> 32) * id) & 0x7FFFFFFF);
+    return uint32_t(((id >> 32) ^ id) & 0x7FFFFFFF);
+  }
+
+  static constexpr uint64_t murmur_scramble(uint64_t h)
+  {
+    h ^= h >> 33;
+    h *= 0xff51afd7ed558ccd;
+    h ^= h >> 33;
+    h *= 0xc4ceb9fe1a85ec53;
+    h ^= h >> 33;
+    return h;
+  }
+  static constexpr uint32_t murmur_scramble(uint32_t h)
+  {
+    h ^= h >> 16;
+    h *= 0x85ebca6b;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35;
+    h ^= h >> 16;
+    return h;
   }
 }
 
