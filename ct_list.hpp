@@ -79,7 +79,7 @@ namespace neam
         {
           static constexpr long index = -1;
         };
-        template<typename List, typename Type> struct type_index_list {};
+        template<typename List, typename Type> struct type_index_list { static constexpr long index = -1; };
         template<template<typename...> class List, typename... Types, typename Type>
         struct type_index_list<List<Types...>, Type> : public type_index<0, Type, Types...> {};
 
