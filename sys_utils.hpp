@@ -32,5 +32,7 @@ namespace neam::sys
 {
   /// \brief Open an url/file using the user's preferred app
   void open_url(const std::string& url);
+
+  void set_cpu_affinity(uint32_t thread_index);
 }
 

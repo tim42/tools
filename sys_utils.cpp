@@ -32,6 +32,7 @@
 #ifdef __unix__
   #include <unistd.h>
   #include <sys/wait.h>
+  #include <sched.h>
 #elif defined(_WIN32)
   #include <windows.h>
   #include <stringapiset.h>
@@ -81,6 +82,17 @@ namespace neam::sys
     waitpid(child, &r, 0);
 #elif define(_WIN32)
     ShellExecute(0, 0, convert_to_ps(url).c_str(), 0, 0, SW_SHOW);
+#endif
+  }
+
+
+  void set_cpu_affinity(uint32_t thread_index)
+  {
+#ifdef __unix__
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(thread_index, &set);
+    sched_setaffinity(0, sizeof(cpu_set_t), &set);
 #endif
   }
 }
