@@ -103,37 +103,38 @@ namespace neam::cr
       std::lock_guard<spinlock> acquire_lock() { return std::lock_guard<spinlock>{lock}; }
       void wait_for_lock() { lock._wait_for_lock(); }
 
-#if N_LOGGER_USE_FMT
-      template<typename... Args> using format_string = fmt::format_string<Args...>;
-#else
-      template<typename... Args> using format_string = const char*;
-#endif
-
-#if N_LOGGER_USE_FMT
-      template<typename... Args>
-      void log_fmt(severity s, std::source_location loc, format_string<Args...> str, Args&&... args)
-      {
-        log_str(s, fmt::format(std::move(str), std::forward<Args>(args)...), loc);
-      }
-#elif !N_LOGGER_CRIPPLED
-      template<typename... Args>
-      void log_fmt(severity s, std::source_location loc, format_string<Args...> str, Args&&... args)
-      {
-        log_str(s, std::format(str, std::forward<Args>(args)...), loc);
-      }
-#else
-      template<typename... Args>
-      void log_fmt(severity s, std::source_location loc, format_string<Args...> str, Args&&... args)
-      {
-        log_str(s, str, loc);
-      }
-#endif
 
       struct log_location_helper
       {
         logger& output;
         const std::source_location loc;
         bool skip_lock = false;
+
+#if N_LOGGER_USE_FMT
+        template<typename... Args> using format_string = fmt::format_string<Args...>;
+#else
+        template<typename... Args> using format_string = const char*;
+#endif
+
+#if N_LOGGER_USE_FMT
+        template<typename... Args>
+        void log_fmt(severity s, std::source_location loc, format_string<Args...> str, Args&&... args)
+        {
+          output.log_str(s, fmt::format(std::move(str), std::forward<Args>(args)...), loc);
+        }
+#elif !N_LOGGER_CRIPPLED
+        template<typename... Args>
+        void log_fmt(severity s, std::source_location loc, format_string<Args...> str, Args&&... args)
+        {
+          output.log_str(s, std::format(str, std::forward<Args>(args)...), loc);
+        }
+#else
+        template<typename... Args>
+        void log_fmt(severity s, std::source_location loc, format_string<Args...> str, Args&&... args)
+        {
+          output.log_str(s, str, loc);
+        }
+#endif
 
         template<typename... Args>
         void log_fmt(severity s, format_string<Args...> str, Args&& ... args)
@@ -142,7 +143,7 @@ namespace neam::cr
             return;
           if (!skip_lock)
             output.wait_for_lock();
-          output.log_fmt(s, loc, str, std::forward<Args>(args)...);
+          log_fmt(s, loc, str, std::forward<Args>(args)...);
         }
 
         // helpers:
@@ -150,29 +151,29 @@ namespace neam::cr
         void debug(format_string<Args...> str, Args&& ... args)
         {
 #if !N_LOGGER_STRIP_DEBUG
-          output.log_fmt<Args...>(severity::debug, loc, std::move(str), std::forward<Args>(args)...);
+          log_fmt<Args...>(severity::debug, std::move(str), std::forward<Args>(args)...);
 #endif
         }
         template<typename... Args>
         void log(format_string<Args...> str, Args&& ... args)
         {
-          output.log_fmt<Args...>(severity::message, loc, std::move(str), std::forward<Args>(args)...);
+          log_fmt<Args...>(severity::message, std::move(str), std::forward<Args>(args)...);
         }
         template<typename... Args>
         void warn(format_string<Args...> str, Args&& ... args)
         {
-          output.log_fmt<Args...>(severity::warning, loc, std::move(str), std::forward<Args>(args)...);
+          log_fmt<Args...>(severity::warning, std::move(str), std::forward<Args>(args)...);
         }
         template<typename... Args>
         void error(format_string<Args...> str, Args&& ... args)
         {
-          output.log_fmt<Args...>(severity::error, loc, std::move(str), std::forward<Args>(args)...);
+          log_fmt<Args...>(severity::error, std::move(str), std::forward<Args>(args)...);
         }
 
         template<typename... Args>
         void critical(format_string<Args...> str, Args&& ... args)
         {
-          output.log_fmt<Args...>(severity::critical, loc, std::move(str), std::forward<Args>(args)...);
+          log_fmt<Args...>(severity::critical, std::move(str), std::forward<Args>(args)...);
         }
       };
 
