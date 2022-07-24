@@ -30,6 +30,7 @@
 #include <vector>
 #include "../logger/logger.hpp"
 #include "../type_id.hpp"
+#include "../ct_list.hpp"
 
 #include "../struct_metadata/struct_metadata.hpp"
 
@@ -197,7 +198,27 @@ namespace neam::cmdline
             using member = ct::list::get_type<n_metadata_member_list<Struct>, Index>;
             using member_type = typename member::type;
 
-            cr::out().log(" --{} (default value: `{}`, type: {})", member::name.string, member_at<member_type, member::offset>(v), ct::type_name<member_type>.str);
+            std::string name = member::name.string;
+            for (char& c : name) { if (c == '-') c = '_'; }
+
+            // print the name:
+            cr::out().log(" --{} (default value: `{}`, type: {})", name, member_at<member_type, member::offset>(v), ct::type_name<member_type>.str);
+            // print some debug info if availlable:
+            if constexpr (ct::list::has_type<std::remove_cvref_t<decltype(member::metadata_tuple)>, metadata::info::metadata>)
+            {
+              const metadata::info::metadata& mt_info = std::get<metadata::info::metadata>(member::metadata_tuple);
+              if (!mt_info.description.empty())
+              {
+                auto desc = neam::cr::split_string(mt_info.description, "\n");
+                for (auto& it : desc)
+                  cr::out().log("    {}", it);
+              }
+              if (!mt_info.doc_url.empty())
+                cr::out().log("    documentation url: {}", mt_info.doc_url);
+
+              if (!mt_info.description.empty() || !mt_info.doc_url.empty())
+                cr::out().log(""); // empty line
+            }
           } .template operator()<Indices>(), ...);
         } (std::make_index_sequence<ct::list::size<n_metadata_member_list<Struct>>> {});
       }
