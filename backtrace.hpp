@@ -59,7 +59,7 @@ namespace neam
 
       auto logger = neam::cr::out(has_logger_lock);
       logger.warn("#############[  B A C K T R A C E  ]#############"); 
-      logger.debug("## most recent call first:"); 
+      logger.warn("## most recent call first:"); 
 
       for (int j = skip; j < num; ++j)
       {
@@ -102,7 +102,7 @@ namespace neam
         addr.push_back(fnc_addr);
       }
 
-      logger.debug("## addr2line -e {} -fipsC {}", program_invocation_name, fmt::join(addr, " "));
+      logger.warn("## addr2line -e {} -fipsC {}", program_invocation_name, fmt::join(addr, " "));
 
       for (auto it : addr)
       {
