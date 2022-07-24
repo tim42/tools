@@ -145,7 +145,8 @@ namespace neam::rle
     }
     static void generate_metadata(serialization_metadata& mt)
     {
-      mt.add_type<pair_type>( { type_mode::tuple, sizeof(pair_type), { mt.ref<F>(), mt.ref<S>() } } );
+      // key / value as pair are mostly used in maps
+      mt.add_type<pair_type>( { type_mode::tuple, sizeof(pair_type), { mt.ref<F>("key"), mt.ref<S>("value") } } );
       coder<F>::generate_metadata(mt);
       coder<S>::generate_metadata(mt);
     }
