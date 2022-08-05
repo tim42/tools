@@ -74,7 +74,8 @@ namespace neam
           TP_MK_ENTRY(VK_SUBOPTIMAL_KHR, "A swapchain no longer matches the surface properties exactly, but can still be used to present to the surface successfully"),
           TP_MK_ENTRY(VK_ERROR_OUT_OF_DATE_KHR, "A surface has changed in such a way that it is no longer compatible with the swapchain, and further presentation requests using the swapchain will fail. Applications must query the new surface properties and recreate their swapchain if they wish to continue presenting to the surface"),
           TP_MK_ENTRY(VK_ERROR_INCOMPATIBLE_DISPLAY_KHR, "The display used by a swapchain does not use the same presentable image layout, or is incompatible in a way that prevents sharing an image"),
-          TP_MK_ENTRY(VK_ERROR_VALIDATION_FAILED_EXT, "If the application returns VK_TRUE from it's callback and the api call being aborted returns a VkResult, the layer will return VK_ERROR_VALIDATION_FAILED_EXT."),
+          TP_MK_ENTRY(VK_ERROR_VALIDATION_FAILED_EXT, "If the application returns VK_TRUE from its callback and the api call being aborted returns a VkResult, the layer will return VK_ERROR_VALIDATION_FAILED_EXT."),
+          TP_MK_ENTRY(VK_ERROR_OUT_OF_POOL_MEMORY, "Out of pool memory"),
 //          TP_MK_ENTRY(VK_ERROR_INVALID_SHADER_NV, "---"),
         };
 #undef TP_MK_ENTRY
