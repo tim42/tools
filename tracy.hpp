@@ -30,7 +30,6 @@
 
 #if __has_include(<tracy/Tracy.hpp>) && defined(TRACY_ENABLE) && TRACY_ENABLE
 #include <tracy/Tracy.hpp>
-#include <tracy/common/TracySystem.hpp>
 
 #include "ct_string.hpp"
 
@@ -70,8 +69,11 @@ namespace neam::ct::internal
 
   #define TRACY_PLOT_CSTR(name, value)  TracyPlot(neam::ct::internal::unique_str<name>, value)
   #define TRACY_PLOT(name, value)  TracyPlot(name, value)
-  #define TRACY_PLOT_CONFIG_CSTR(name, format) TracyPlotConfig(neam::ct::internal::unique_str<name>, format)
-  #define TRACY_PLOT_CONFIG(name, format) TracyPlotConfig(name, format)
+  #define TRACY_PLOT_CONFIG_CSTR(name, format) TracyPlotConfig(neam::ct::internal::unique_str<name>, format, true, true, 0xFFFFFFFF)
+  #define TRACY_PLOT_CONFIG(name, format) TracyPlotConfig(name, format, true, true, 0xFFFFFFFF)
+
+  #define TRACY_PLOT_CONFIG_EX_CSTR(name, format, step, color) TracyPlotConfig(neam::ct::internal::unique_str<name>, format, step, true, color)
+  #define TRACY_PLOT_CONFIG_EX(name, format, step, color) TracyPlotConfig(name, format, step, true, color)
 
   #define TRACY_LOG(msg, size) TracyMessage(msg, size, color)
   #define TRACY_LOG_COLOR(msg, size, color) TracyMessageC(msg, size, color)
@@ -101,6 +103,9 @@ namespace neam::ct::internal
   #define TRACY_PLOT(name, value)
   #define TRACY_PLOT_CONFIG_CSTR(name, format)
   #define TRACY_PLOT_CONFIG(name, format)
+
+  #define TRACY_PLOT_CONFIG_EX_CSTR(name, format, step, color)
+  #define TRACY_PLOT_CONFIG_EX(name, format, step, color)
 
   #define TRACY_LOG(msg, size)
   #define TRACY_LOG_COLOR(msg, size, color)
