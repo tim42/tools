@@ -40,6 +40,7 @@ namespace neam::metadata
     struct metadata
     {
       metadata() = default;
+      metadata(const metadata&) = default;
       metadata(const info& _info) : description(_info.description.str), doc_url(_info.doc_url.str) {}
 
       std::string description;

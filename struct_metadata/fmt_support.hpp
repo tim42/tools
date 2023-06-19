@@ -43,7 +43,7 @@ template<neam::metadata::concepts::StructWithMetadata Struct> struct fmt::format
   template <typename FormatContext>
   auto format(const Struct& v, FormatContext& ctx)
   {
-    return format_to(ctx.out(), "{}", neam::metadata::type_to_string<Struct>(v));
+    return fmt::format_to(ctx.out(), "{}", neam::metadata::type_to_string<Struct>(v));
   }
 };
 

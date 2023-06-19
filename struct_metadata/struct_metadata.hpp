@@ -76,7 +76,7 @@ namespace neam::metadata::internal
 
     /// \brief easy way for code to iterate over all the different metadata (see cr::for_each (in container_utils.hpp)):
     /// possible usage: cr::for_each(type_info.metadata_tuple, [](auto&& v) { ... });
-    static const inline std::tuple<typename decltype(ExtraMetadata)::metadata...> metadata_tuple { ExtraMetadata... };
+    static inline std::tuple<typename decltype(ExtraMetadata)::metadata...> metadata_tuple() { return { ExtraMetadata... }; }
   };
 }
 
