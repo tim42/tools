@@ -135,10 +135,10 @@ template <> struct fmt::formatter<neam::id_t>
   auto format(neam::id_t id, FormatContext& ctx)
   {
     if (id == neam::id_t::invalid)
-      return format_to(ctx.out(), "[id:invalid]");
+      return fmt::format_to(ctx.out(), "[id:invalid]");
     if (id == neam::id_t::none)
-      return format_to(ctx.out(), "[id:none]");
-    return format_to(ctx.out(), "[id:0x{:X}]", std::to_underlying(id));
+      return fmt::format_to(ctx.out(), "[id:none]");
+    return fmt::format_to(ctx.out(), "[id:0x{:X}]", std::to_underlying(id));
   }
 };
 #endif

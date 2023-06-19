@@ -24,6 +24,7 @@ endif()
 # create the library
 add_library(ntools
     logger/logger.cpp
+    id/string_id.cpp
     threading/task.cpp
     threading/task_group_graph.cpp
     threading/task_manager.cpp
@@ -36,6 +37,8 @@ add_library(ntools
 
     ${io_srcs}
     test.cpp
+
+    demangle.hpp
 )
 
 # Workaround kdevelop refusing the C++23 standard if set in cmake...

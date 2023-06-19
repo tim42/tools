@@ -27,6 +27,7 @@
 #pragma once
 
 #include "../hash/fnv1a.hpp"
+#include "../ct_string.hpp"
 
 #include "id.hpp"
 
@@ -36,6 +37,16 @@
 
 namespace neam
 {
+#if !N_STRIP_DEBUG
+  namespace internal::id::debug
+  {
+    /// \brief Register a string for id, check for potential conflicts, returns a string that can be safely stored in a string_id
+    std::string_view register_string(id_t id, std::string_view view);
+    /// \brief Returns the string view associated for a given id
+    std::string_view get_string_for_id(id_t id);
+  }
+#endif
+
   /// \brief Convert a C string to a id_t, providing debug information when possible.
   /// \warning Do no rely on the size. Use id_t when the debug information is not necessary.
   /// Resources have the following format:
@@ -53,7 +64,8 @@ namespace neam
   class string_id
   {
     public:
-      // Implicit string -> string_id 
+      // Implicit string -> string_id.
+      // WARNING: The string MUST be a globally availlable object (with linkage)
       template<size_t Count>
       consteval string_id(const char (&_str)[Count])
        : id((id_t)ct::hash::fnv1a<64, Count>(_str))
@@ -74,17 +86,26 @@ namespace neam
       {
       }
 
+      consteval string_id(const ct::string& _str)
+       : id((id_t)ct::hash::fnv1a<64>(_str.str, _str.size))
+#if !N_STRIP_DEBUG
+       , str(_str.str)
+       , str_length(_str.size)
+#endif
+      {
+      }
+
       // Create an indentifier from type-id + res name (in the form of type-id:res-name)
       template<size_t Count>
       consteval string_id(id_t res_id, const char (&_type_id)[Count])
        : id(specialize(res_id, _type_id))
 #if !N_STRIP_DEBUG
-       // FIXME:
+       // FIXME: if that's even possible...
 #endif
       {
       }
 
-      consteval string_id() {}
+      /*consteval*/ constexpr string_id() = default;
       constexpr string_id(const string_id& o) = default;
 
       constexpr operator id_t () const
@@ -92,12 +113,16 @@ namespace neam
         return id;
       }
 
+      constexpr auto operator <=> (const string_id& o) const { return id <=> o.id; }
+
 #if !N_STRIP_DEBUG
       constexpr const char* get_string() const { return str; }
       constexpr size_t get_string_length() const { return str_length; }
+      constexpr std::string_view get_string_view() const { return {str, str_length}; }
 #else
       constexpr const char* get_string() const { return nullptr; }
       constexpr size_t get_string_length() const { return 0; }
+      constexpr std::string_view get_string_view() const { return {nullptr, 0}; }
 #endif
 
       /// \brief Slowly build from a string at runtime.
@@ -105,27 +130,72 @@ namespace neam
       [[nodiscard]] constexpr static string_id _runtime_build_from_string(const char* const _str, const size_t len)
       {
 #if !N_STRIP_DEBUG
-        return string_id((id_t)ct::hash::fnv1a<64>(_str, len)/*, _str, len*/);
+        const id_t id = (id_t)ct::hash::fnv1a<64>(_str, len);
+        return string_id(id, _str, len);
 #else
         return string_id((id_t)ct::hash::fnv1a<64>(_str, len));
 #endif
       };
+      /// \brief Slowly build from a string at runtime.
+      /// \warning Slow. And may leave the string in the binary
+      [[nodiscard]] constexpr static string_id _runtime_build_from_string(std::string_view view)
+      {
+#if !N_STRIP_DEBUG
+        const id_t id = (id_t)ct::hash::fnv1a<64>(view.data(), view.size());
+        return string_id(id, view.data(), view.size());
+#else
+        return string_id((id_t)ct::hash::fnv1a<64>(view.data(), view.size()));
+#endif
+      };
 
-      constexpr static string_id _runtime_build_from_string(id_t prev, const char* const _str, const size_t len)
+      [[nodiscard]] static string_id _runtime_build_from_string(string_id prev, const char* const _str, const size_t len)
+      {
+        const id_t id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)(id_t)prev, _str, len);
+#if !N_STRIP_DEBUG
+        if (prev.get_string() != nullptr)
+        {
+          std::string str;
+          str += prev.get_string_view();
+          str += std::string_view(_str, len);
+          return string_id(id, str.data(), str.size());
+        }
+        return string_id(id);
+#else
+        return string_id(id);
+#endif
+      };
+
+      [[nodiscard]] constexpr static string_id _runtime_build_from_string(id_t prev, const char* const _str, const size_t len)
       {
         return string_id((id_t)ct::hash::fnv1a_continue<64>((uint64_t)prev, _str, len));
       };
 
     private:
-      constexpr string_id(id_t rid) : id(rid) {}
+      constexpr string_id(id_t rid) : id(rid)
+      {
 #if !N_STRIP_DEBUG
-      consteval string_id(id_t rid, const char* _str, size_t _len) : id(rid), str(_str), str_length(_len) {}
+        if !consteval
+        {
+          auto view = internal::id::debug::get_string_for_id(id);
+          str = view.data();
+          str_length = view.size();
+        }
+#endif
+      }
+#if !N_STRIP_DEBUG
+      constexpr string_id(id_t rid, const char* _str, size_t _len) : id(rid), str(_str), str_length(_len)
+      {
+        if !consteval
+        {
+          str = internal::id::debug::register_string(id, {str, str_length}).data();
+        }
+      }
 #endif
 
-      const id_t id = id_t::none;
+      id_t id = id_t::none;
 #if !N_STRIP_DEBUG
-      const char* const str = nullptr;
-      const size_t str_length = 0;
+      const char* str = nullptr;
+      size_t str_length = 0;
 #endif
   };
 }
@@ -147,12 +217,12 @@ template <> struct fmt::formatter<neam::string_id>
 #if !N_STRIP_DEBUG
     if (sid.get_string())
     {
-      return format_to(ctx.out(), "{}({})", (neam::id_t)sid, std::string_view(sid.get_string(), sid.get_string_length()));
+      return fmt::format_to(ctx.out(), "{}({})", (neam::id_t)sid, std::string_view(sid.get_string(), sid.get_string_length()));
     }
 #endif
 
     // fallback to formatting the id:
-    return format_to(ctx.out(), "{}", (neam::id_t)sid);
+    return fmt::format_to(ctx.out(), "{}", (neam::id_t)sid);
   }
 };
 #endif
