@@ -34,6 +34,8 @@
 
 namespace neam::cr
 {
+  template<typename... Args> class event;
+
   /// \brief generic RAII token for events
   class event_token_t
   {
@@ -66,6 +68,11 @@ namespace neam::cr
           destruct(*this);
       }
 
+      bool is_valid() const
+      {
+        return key != 0;
+      }
+
     private:
       event_token_t(fu2::unique_function<void(event_token_t&)>&& d, uint64_t k) : destruct(std::move(d)), key(k) {}
 
@@ -94,7 +101,7 @@ namespace neam::cr
       {
         std::lock_guard _l(lock);
         check::debug::n_check(count == 0, "{}: {} event receiver are still registered, referencing a destroyed object",
-                              ct::type_name<event<Args...>>, functions.size());
+                             ct::type_name<event<Args...>>, functions.size());
       }
 
       event_token_t operator += (function_t&& fnc) { return add(std::move(fnc)); }
@@ -122,7 +129,7 @@ namespace neam::cr
               if (functions[i].key == k_null_token)
                 continue;
               // Added during the event call, so we ignore those
-              // as otherwise we might having inconsistent behavior
+              // as otherwise we might have inconsistent behavior
               if (functions[i].key >= initial_token)
                 continue;
               [[unlikely]] if (token < initial_token) // overflow, unlikely on a 64bit number
@@ -184,10 +191,14 @@ namespace neam::cr
           return;
 
         std::lock_guard _l(lock);
+        if (tk.key == k_null_token)
+          return;
         remove_id(tk.key);
         tk.key = k_null_token;
         tk.destruct = {};
       }
+
+      uint32_t get_number_of_listeners() const { return count; }
 
     private:
       void remove_id(uint64_t k)
