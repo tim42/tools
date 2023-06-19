@@ -36,7 +36,19 @@ namespace neam
   {
     using unique_ptr = std::unique_ptr<void, internal::operator_delete_deleter>;
     unique_ptr data;
-    size_t size;
+    size_t size = 0;
+
+    operator void* () { return data.get(); }
+    operator const void* () const { return data.get(); }
+
+    void* get() { return data.get(); }
+    const void* get() const { return data.get(); }
+
+    void reset() { data.reset(); }
+
+    /// \brief duplicate the raw data / its allocation.
+    /// Explicit (no operator = ) so as to avoid mistakenly duplicating this stuff
+    raw_data duplicate() const { return duplicate(*this); }
 
     /// \brief Allocates and setup a raw_data
     static raw_data allocate(size_t size) { return { unique_ptr(operator new(size)), size }; }
@@ -69,5 +81,13 @@ namespace neam
       raw_data ret = allocate(size);
       memcpy(ret.data.get(), data, size);
       return ret;
-    }  };
+    }
+
+    static bool is_same(const raw_data& a, const raw_data& b)
+    {
+      if (&a == &b) return true;
+      if (a.size != b.size) return false;
+      return memcmp(a.get(), b.get(), a.size) == 0;
+    }
+  };
 }
