@@ -27,8 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_6139159572450221341_1885311108_VK_ERRORS_HPP__
-#define __N_6139159572450221341_1885311108_VK_ERRORS_HPP__
+#pragma once
 
 #include <string>
 #include <vulkan/vulkan.h>
@@ -137,5 +136,4 @@ namespace neam::check
   using vulkan = on_vulkan_error;
 }
 
-#endif // __N_6139159572450221341_1885311108_VK_ERRORS_HPP__
 

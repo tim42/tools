@@ -25,7 +25,6 @@
 // SOFTWARE.
 //
 
-#pragma once
 
 #include "sys_utils.hpp"
 

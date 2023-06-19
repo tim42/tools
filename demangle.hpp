@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_11013861961332692490_320117215__DEMANGLE_HPP__
+#pragma once
 # define __N_11013861961332692490_320117215__DEMANGLE_HPP__
 
 #include <string>
@@ -95,7 +95,7 @@ namespace neam
   }
 } // neam
 
-#endif /*__N_11013861961332692490_320117215__DEMANGLE_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

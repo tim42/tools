@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_514825144439029395_657528994__MACRO_HPP__2___
+#pragma once
 # define __N_514825144439029395_657528994__MACRO_HPP__2___
 
 //
@@ -39,7 +39,7 @@
 #define N_EXP_STRINGIFY(s) N_STRINGIFY(s)
 
 
-#endif /*__N_514825144439029395_657528994__MACRO_HPP__2___*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

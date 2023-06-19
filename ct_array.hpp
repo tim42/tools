@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_14558597131808588598_248435571__CT_ARRAY_HPP__
+#pragma once
 # define __N_14558597131808588598_248435571__CT_ARRAY_HPP__
 
 #include <cstddef>
@@ -101,7 +101,7 @@ namespace neam
   } // namespace ct
 } // namespace neam
 
-#endif /*__N_14558597131808588598_248435571__CT_ARRAY_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

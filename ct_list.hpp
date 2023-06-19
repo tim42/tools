@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_48888409651922371_1596013433__CT_LIST_HPP__
+#pragma once
 # define __N_48888409651922371_1596013433__CT_LIST_HPP__
 
 #include <memory>
@@ -500,7 +500,7 @@ namespace neam
   } // namespace ct
 } // namespace neam
 
-#endif /*__N_48888409651922371_1596013433__CT_LIST_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_333063978185995303_2133399434__CONSTRUCTOR_CALL_HPP__
+#pragma once
 # define __N_333063978185995303_2133399434__CONSTRUCTOR_CALL_HPP__
 
 //
@@ -170,7 +170,7 @@ namespace neam
   } // namespace ct
 } // namespace neam
 
-#endif /*__N_333063978185995303_2133399434__CONSTRUCTOR_CALL_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

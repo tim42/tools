@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_14838165221451961813_480336325__UNIX_ERRORS_HPP__
+#pragma once
 # define __N_14838165221451961813_480336325__UNIX_ERRORS_HPP__
 
 #include <CL/cl.h>
@@ -168,7 +168,7 @@ namespace neam
   } // namespace debug
 } // namespace neam
 
-#endif /*__N_14838165221451961813_480336325__UNIX_ERRORS_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

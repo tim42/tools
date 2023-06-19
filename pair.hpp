@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_10163000121490696598_1767804787__PAIR_HPP__
+#pragma once
 # define __N_10163000121490696598_1767804787__PAIR_HPP__
 
 namespace neam
@@ -46,7 +46,7 @@ namespace neam
   } // namespace ct
 } // namespace neam
 
-#endif /*__N_10163000121490696598_1767804787__PAIR_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_2080156092666096177_2010861593__MEMORY_POOL_HPP__
+#pragma once
 # define __N_2080156092666096177_2010861593__MEMORY_POOL_HPP__
 
 #include <cstdint>
@@ -106,7 +106,7 @@ void operator delete(void *ptr, neam::cr::memory_pool<ObjectType, UnderlyingPool
   pool.deallocate(reinterpret_cast<ObjectType *>(ptr));
 }
 
-#endif /*__N_2080156092666096177_2010861593__MEMORY_POOL_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

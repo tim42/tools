@@ -26,7 +26,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-#ifndef __N_231085794123560898_1536835867__TPL_FLOAT_HPP__
+#pragma once
 # define __N_231085794123560898_1536835867__TPL_FLOAT_HPP__
 
 #include <cstddef>
@@ -105,7 +105,7 @@ namespace neam
   } // namespace embed_helper
 } // namespace neam
 
-#endif /*__N_231085794123560898_1536835867__TPL_FLOAT_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

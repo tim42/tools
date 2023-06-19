@@ -29,7 +29,7 @@
 
 // ATTENTION NOT FINISHED YET !!!
 
-#ifndef __N_2111737739159269973_1204098121__FUNCTION_HPP__
+#pragma once
 # define __N_2111737739159269973_1204098121__FUNCTION_HPP__
 
 #include "ct_list.hpp"
@@ -219,7 +219,7 @@ namespace neam
   } // namespace ct
 } // namespace neam
 
-#endif /*__N_2111737739159269973_1204098121__FUNCTION_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

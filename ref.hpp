@@ -28,7 +28,7 @@
 //
 
 
-#ifndef __N_462308859677856537_1340905228__REF_HPP__
+#pragma once
 # define __N_462308859677856537_1340905228__REF_HPP__
 
 #include <type_traits>
@@ -66,7 +66,7 @@ namespace neam
   } // namespace cr
 } // namespace neam
 
-#endif /*__N_462308859677856537_1340905228__REF_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

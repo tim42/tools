@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_212844892490344838_178107287__ENDIANNESS_HPP__
+#pragma once
 # define __N_212844892490344838_178107287__ENDIANNESS_HPP__
 
 #include <cstdint>
@@ -147,7 +147,7 @@ namespace neam
   } // namespace ct
 } // namespace neam
 
-#endif /*__N_212844892490344838_178107287__ENDIANNESS_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

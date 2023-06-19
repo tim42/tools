@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_2080522430493415542_1720253011__MEMORY_ALLOCATOR_HPP__
+#pragma once
 # define __N_2080522430493415542_1720253011__MEMORY_ALLOCATOR_HPP__
 
 #include <cstdlib>
@@ -533,7 +533,7 @@ namespace neam
   } // namespace cr
 } // namespace neam
 
-#endif /*__N_2080522430493415542_1720253011__MEMORY_ALLOCATOR_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

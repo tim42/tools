@@ -28,7 +28,7 @@
 //
 
 
-#ifndef __N_95287358664168721_1073738764__EMBED_HPP__
+#pragma once
 # define __N_95287358664168721_1073738764__EMBED_HPP__
 
 #include "ct_string.hpp"
@@ -58,7 +58,7 @@ namespace neam
   };
 } // namespace neam
 
-#endif /*__N_95287358664168721_1073738764__EMBED_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 

@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_1396592720261257067_1178544939__ALLOCATION_TRANSACTION_HPP__
+#pragma once
 # define __N_1396592720261257067_1178544939__ALLOCATION_TRANSACTION_HPP__
 
 #include <list>
@@ -178,7 +178,7 @@ namespace neam
   } // namespace cr
 } // namespace neam
 
-#endif /*__N_1396592720261257067_1178544939__ALLOCATION_TRANSACTION_HPP__*/
+
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on; 
 
