@@ -215,7 +215,11 @@ namespace neam::io
 
       static constexpr size_t k_invalid_file_size = ~size_t(0);
       /// \brief returns on-disk size of the file
-      [[nodiscard]] size_t get_file_size(id_t fid);
+      [[nodiscard]] size_t get_file_size(id_t fid) const;
+
+      /// \brief return the most recent of either the modified time or the created time
+      /// (some copy utilities seems to keep the modified date but only update the created date)
+      [[nodiscard]] std::filesystem::file_time_type get_modified_or_created_time(id_t fid) const;
 
       std::string_view get_filename(id_t fid) const
       {
@@ -567,6 +571,8 @@ namespace neam::io
       void process_connect_completion(query& q, bool success);
 
       static const char* get_query_type_str(query::type_t t);
+
+      bool stat_file(id_t fid, struct stat& st) const;
 
     private: // members:
       unsigned queue_depth;

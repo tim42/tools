@@ -60,20 +60,19 @@ namespace neam::io
     io_uring_queue_exit(&ring);
   }
 
-  size_t context::get_file_size(id_t fid)
+  bool context::stat_file(id_t fid, struct stat& st) const
   {
     // try to get a fd for the file if it is already open:
     int fd = -1;
-    struct stat st;
     {
       std::lock_guard _fdl(fd_lock);
       if (const auto it = opened_fd.find(fid); it != opened_fd.end())
       {
         if (!it->second.file)
-          return k_invalid_file_size;
+          return false;
         fd = it->second.fd;
         if (check::unx::n_check_success(fstat(fd, &st)) < 0)
-          return k_invalid_file_size;
+          return false;
       }
     }
 
@@ -84,28 +83,52 @@ namespace neam::io
       if (!is_file_mapped(fid))
       {
         check::debug::n_check(is_file_mapped(fid), "Failed to open {}: file not mapped", fid);
-        return k_invalid_file_size;
+        return false;
       }
 
 //       if (check::unx::n_check_code(stat(get_c_filename(fid), &st), "stat failed on file: {}", get_c_filename(fid)) < 0)
       if (stat(get_c_filename(fid), &st) < 0)
-        return k_invalid_file_size;
+        return false;
     }
+    return true;
+  }
+
+  size_t context::get_file_size(id_t fid) const
+  {
+    struct stat st;
+    if (!stat_file(fid, st))
+      return k_invalid_file_size;
 
     // get the actual size from the stat structure:
-    if (S_ISBLK(st.st_mode))
-    {
-      size_t bytes;
-      if (check::unx::n_check_success(ioctl(fd, BLKGETSIZE64, &bytes)) != 0)
-        return k_invalid_file_size;
-      return bytes;
-    }
-    else if (S_ISREG(st.st_mode))
+    check::debug::n_check(S_ISREG(st.st_mode), "Failed to get file size {}: file is not a regular file", fid);
+    if (S_ISREG(st.st_mode))
     {
       return st.st_size;
     }
 
     return k_invalid_file_size;
+  }
+
+  static std::filesystem::file_time_type timespec_to_fstime(struct timespec ts)
+  {
+    return std::filesystem::file_time_type
+    {
+      std::chrono::duration_cast<std::filesystem::file_time_type::duration>
+      (
+      std::chrono::seconds{ts.tv_sec} + std::chrono::nanoseconds{ts.tv_nsec}
+      )
+    };
+  }
+
+  std::filesystem::file_time_type context::get_modified_or_created_time(id_t fid) const
+  {
+    struct stat st;
+    if (!stat_file(fid, st))
+      return {};
+
+    std::filesystem::file_time_type m = timespec_to_fstime(st.st_mtim);
+    std::filesystem::file_time_type c = timespec_to_fstime(st.st_ctim);
+    return c > m ? c : m;
   }
 
   void context::force_close_all_fd(bool include_sockets)
@@ -120,7 +143,7 @@ namespace neam::io
     // move the opened lists to the to-close list
     for (auto& it : temp_fd)
     {
-      if (include_sockets || !it.second.socket)
+      if (include_sockets || (!it.second.socket && !it.second.pipe))
         _unlocked_close(it.first);
       else
         opened_fd.emplace_hint(opened_fd.end(), it.first, it.second);
@@ -131,6 +154,7 @@ namespace neam::io
   {
     force_close_all_fd();
     std::lock_guard<spinlock> _ml(mapped_lock);
+    neam::cr::out().debug("io::context: forcefully clearing all mapped files ({})", mapped_files.size());
     mapped_files.clear();
   }
 
@@ -147,7 +171,7 @@ namespace neam::io
   id_t context::register_fd(file_descriptor fd)
   {
     // create an ID for the socket
-    constexpr uint64_t k_external_id_flag = 0XF000000000000000;
+    constexpr uint64_t k_external_id_flag = 0x8000000000000000;
 //     const id_t id = (id_t)(k_external_id_flag | fd.fd);
     const id_t id = (id_t)(k_external_id_flag | reinterpret_cast<uint64_t&>(fd));
 
@@ -258,6 +282,11 @@ namespace neam::io
     int pipe_fds[2] = { -1, -1 };
     if (check::unx::n_check_success(pipe(pipe_fds)) < 0)
       return false;
+    if (pipe_fds[0] == -1 || pipe_fds[1] == -1)
+    {
+      check::debug::n_check(false, "invalid pipe FD");
+      return false;
+    }
 
     read = register_fd({
       .fd = pipe_fds[0],
