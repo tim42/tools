@@ -189,7 +189,7 @@ namespace neam::threading
       // If that limit is hit something is going very very wrong.
       static constexpr uint32_t k_max_dependencies = k_is_slated_to_run_marker - 2;
 
-      static constexpr uint32_t k_max_task_to_notify = 16;
+      static constexpr uint32_t k_max_task_to_notify = 8;
 
       mutable spinlock lock;
 
@@ -201,11 +201,16 @@ namespace neam::threading
       // This may happens when creating and dispatching dependencies of a task and contention haappens
       bool held_by_wrapper = true;
 
+      // [16 bits free here]
+
       uint32_t number_of_task_to_notify = 0;
       uint32_t dependencies = 0;
 
       // Debug purpose only. Can catch some weird dangling references.
       uint32_t frame_key = 0;
+
+      // only used for long-duration tasks. Is ignored for any other type of tasks.
+      std::chrono::time_point<std::chrono::high_resolution_clock> execution_time_point = {};
 
       task* tasks_to_notify[k_max_task_to_notify];
 

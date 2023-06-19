@@ -45,11 +45,7 @@ namespace neam::threading
   class task_manager
   {
     public: // General stuff
-      task_manager()
-      {
-        transient_tasks.pool_debug_name = "task_manager::transient_tasks pool";
-        non_transient_tasks.pool_debug_name = "task_manager::non_transient_tasks pool";
-      }
+      task_manager();
 
       /// \brief The frame lock will prevent the task graph from advancing keeping it locked in its current state.
       /// The only task group that can run is the non_transient_tasks
@@ -62,10 +58,12 @@ namespace neam::threading
       /// \brief Will stop the task manager next frame
       /// \note the frame_lock (get_frame_lock()) will be locked. Unlocking it will resume the operations.
       /// \note long-duration tasks are not affected by this and can continue to run
-      void request_stop(function_t&& on_stopped)
+      void request_stop(function_t&& on_stopped, bool flush_all_delayed_tasks = false)
       {
         frame_state.should_stop = true;
         frame_state.on_stopped = std::move(on_stopped);
+        if (flush_all_delayed_tasks)
+          poll_delayed_tasks(true);
       }
 
     public: // task group stuff. WARNING MUST BE CALLED BEFORE ANY CALL TO get_task()
@@ -127,6 +125,14 @@ namespace neam::threading
       ///
       /// \warning Spawning any non-long duration tasks from within a long-duration task is undefined behavior and may lead to crashs
       task_wrapper get_long_duration_task(function_t&& func);
+
+      /// \brief allocate and construct a long-duration task that is guaranteed to not execute before delay has expired
+      /// \note the actual execution time can be arbitrary long after the delay has been reached
+      /// \see get_long_duration_task
+      /// \warning Spawning any non-long duration tasks from within a long-duration task is undefined behavior and may lead to crashs
+      /// \warning Should not be spammed as it does have a super high contention problem at task insertion and is very very slow overall
+      /// \note delayed task will have the lowest priority if they didn't reach their delay at insertion
+      task_wrapper get_delayed_task(function_t&& func, std::chrono::milliseconds delay);
 
       /// \brief tentatively run a task
       ///
@@ -206,6 +212,8 @@ namespace neam::threading
 
       void reset_state();
 
+      void poll_delayed_tasks(bool force_push = false);
+
       static void do_run_task(task& task);
 
     private:
@@ -245,10 +253,31 @@ namespace neam::threading
         spinlock lock;
       };
 
+      struct delayed_task_t
+      {
+        task* ptr;
+        auto operator <=> (const delayed_task_t& o) const
+        {
+          const auto x = ptr->execution_time_point <=> o.ptr->execution_time_point;
+          [[likely]] if (x != 0)
+            return x;
+          return ptr <=> o.ptr;
+        }
+      };
+      struct sorted_task_list_t
+      {
+        // FIXME: something better (probably bucket-based with very coarse/exponential sorting).
+        //        currently, it's so very slow.
+        std::set<delayed_task_t> delayed_tasks;
+        spinlock lock; // the contention problem
+      };
+
       struct frame_state_t
       {
         std::deque<group_info_t> groups;
         std::deque<chain_info_t> chains;
+
+        sorted_task_list_t delayed_tasks;
 
         alignas(64) std::atomic<uint32_t> tasks_that_can_run = 0;
         std::atomic<uint32_t> ended_chains = 0;

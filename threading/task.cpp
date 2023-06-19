@@ -37,6 +37,8 @@ namespace neam::threading
   void task::push_to_run(bool from_wrapper)
   {
     // Avoid super weird and hard to debug race conditions
+    // (dependencies are setup then completed while the wrapper still hold the task,
+    //  leading to a incoherent task state (not fully setup. sometimes))
     if (!from_wrapper && held_by_wrapper) return;
 
     check::debug::n_assert(from_wrapper == held_by_wrapper, "incoherent state");

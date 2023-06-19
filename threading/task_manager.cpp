@@ -31,6 +31,17 @@
 
 namespace neam::threading
 {
+  task_manager::task_manager()
+  {
+    frame_state.groups.resize(1);
+
+    transient_tasks.pool_debug_name = "task_manager::transient_tasks pool";
+    non_transient_tasks.pool_debug_name = "task_manager::non_transient_tasks pool";
+
+    TRACY_PLOT_CONFIG_EX_CSTR("task_manager::waiting_tasks", tracy::PlotFormatType::Number, true, 0x7f1111ff);
+    TRACY_PLOT_CONFIG_EX_CSTR("task_manager::delayed_tasks", tracy::PlotFormatType::Number, true, 0x7f117fff);
+  }
+
   void task_manager::set_start_task_group_callback(group_t group, function_t&& fnc)
   {
     check::debug::n_assert(group < frame_state.groups.size(), "group {} does not exists", group);
@@ -70,6 +81,14 @@ namespace neam::threading
     return *ptr;
   }
 
+  task_wrapper task_manager::get_delayed_task(function_t&& func, std::chrono::milliseconds delay)
+  {
+    const auto execution_time_point = std::chrono::high_resolution_clock::now() + delay;
+    task_wrapper tw = get_long_duration_task(std::move(func));
+    tw.get_task().execution_time_point = execution_time_point;
+    return tw;
+  }
+
   void task_manager::destroy_task(task& t)
   {
     const group_t group = t.key;
@@ -99,16 +118,36 @@ namespace neam::threading
 
   void task_manager::add_task_to_run(task& t)
   {
+    const bool has_delay = t.execution_time_point != decltype(t.execution_time_point){};
     check::debug::n_assert(t.unlock_is_completed() == false, "Trying to push an already completed task");
     check::debug::n_assert(t.unlock_is_waiting_to_run() == false, "Trying to push an already waiting task");
+    check::debug::n_assert(t.key < (uint32_t)frame_state.groups.size(), "Invalid task group type (group: {})", t.key);
     if (t.key != k_non_transient_task_group)
     {
       check::debug::n_assert(t.get_frame_key() == frame_state.frame_key, "Trying to push a task to run when that task has outlived its lifespan");
       check::debug::n_assert(frame_state.groups[t.key].is_completed == false, "Trying to push a task to a completed group");
+      check::debug::n_assert(!has_delay, "Trying to push a non-long duration task with an execution delay");
     }
     // skip tasks that cannot run, as they will be added automatically
     // this check is necessary as this function can be called by a user
     if (!t.unlock_can_run()) return;
+
+
+    if (t.key == k_non_transient_task_group && has_delay)
+    {
+      const auto now = std::chrono::high_resolution_clock::now();
+      if (now < t.execution_time_point)
+      {
+        TRACY_SCOPED_ZONE;
+
+        // Add the task to the sorted list. Will generate a lot of contention if called a lot.
+        std::lock_guard _lg(frame_state.delayed_tasks.lock);
+        frame_state.delayed_tasks.delayed_tasks.emplace(&t);
+        TRACY_PLOT_CSTR("task_manager::delayed_tasks", (int64_t)frame_state.delayed_tasks.delayed_tasks.size());
+        return;
+      }
+      // we have reached the delay already, so we can proceed as normal
+    }
 
     t.set_task_as_waiting_to_run();
 
@@ -121,7 +160,7 @@ namespace neam::threading
     {
       [[maybe_unused]] const uint32_t count = frame_state.tasks_that_can_run.fetch_add(1, std::memory_order_release);
       //frame_state.tasks_that_can_run.notify_one();
-      TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)count);
+      TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)(count + 1));
     }
     else
     {
@@ -141,7 +180,7 @@ namespace neam::threading
     frame_state.chains.resize(frame_ops.chain_count);
     for (uint16_t i = 0; i < frame_ops.chain_count; ++i)
     {
-      check::debug::n_assert(frame_ops.opcodes[i].opcode == ir_opcode::declare_chain_index, "Invalid frame operation: expected declare_chain_index opcode, got {}", frame_ops.opcodes[i].opcode);
+      check::debug::n_assert(frame_ops.opcodes[i].opcode == ir_opcode::declare_chain_index, "Invalid frame operation: expected declare_chain_index opcode, got {:X}", std::to_underlying(frame_ops.opcodes[i].opcode));
       frame_state.chains[i].index = frame_ops.opcodes[i].arg;
     }
 
@@ -327,7 +366,7 @@ namespace neam::threading
 
                 break;
               }
-              default: check::debug::n_assert(false, "Invalid frame operation: unexpected opcode: {}", op.opcode);
+              default: check::debug::n_assert(false, "Invalid frame operation: unexpected opcode: {:X}", std::to_underlying(op.opcode));
                 break;
             }
           }
@@ -402,7 +441,7 @@ namespace neam::threading
         // not a fatal error per say, but may lead to very incorect behavior
         // also, when that test is not present, there's a huge perf penalty
         check::debug::n_assert(count != 0, "Invalid state: tasks_that_can_run: underflow detected");
-        TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)count);
+        TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)(count - 1));
         return ptr;
       }
     }
@@ -436,10 +475,10 @@ namespace neam::threading
 
   void task_manager::wait_for_a_task()
   {
-    TRACY_SCOPED_ZONE_COLOR(0xFF0000);
     if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
       return;
 
+    TRACY_SCOPED_ZONE_COLOR(0xFF0000);
     const uint32_t original_frame_key = frame_state.frame_key;
 
     advance();
@@ -465,17 +504,17 @@ namespace neam::threading
       if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
         return;
 
-      if (loop_count >= k_max_loop_count_before_sleep)
+      if (loop_count > k_max_loop_count_before_sleep)
       {
-        TRACY_SCOPED_ZONE;
+        //TRACY_SCOPED_ZONE;
         // avoid spining and consuming all the cpu:
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(100 * (loop_count - k_max_loop_count_before_sleep)));
       }
       else
       {
         std::this_thread::yield();
-        ++loop_count;
       }
+      ++loop_count;
 
       // try to advance the state to avoid being locked in waiting:
       advance();
@@ -560,6 +599,28 @@ namespace neam::threading
     return frame_state.tasks_that_can_run.load(std::memory_order_acquire);
   }
 
+  void task_manager::poll_delayed_tasks(bool force_push)
+  {
+    TRACY_SCOPED_ZONE_COLOR(0xFF0000);
+
+    std::lock_guard _lg(frame_state.delayed_tasks.lock);
+
+    if (frame_state.delayed_tasks.delayed_tasks.empty())
+      return;
+
+    const auto now = std::chrono::high_resolution_clock::now();
+
+    auto it = frame_state.delayed_tasks.delayed_tasks.begin();
+    while (it != frame_state.delayed_tasks.delayed_tasks.end() && (force_push || it->ptr->execution_time_point <= now))
+    {
+      it->ptr->execution_time_point = {};
+      add_task_to_run(*it->ptr);
+      it = frame_state.delayed_tasks.delayed_tasks.erase(it);
+    }
+
+    TRACY_PLOT_CSTR("task_manager::delayed_tasks", (int64_t)frame_state.delayed_tasks.delayed_tasks.size());
+    return;
+  }
 
   void task_manager::reset_state()
   {
@@ -633,6 +694,9 @@ namespace neam::threading
 
     }
     TRACY_FRAME_MARK_END_CSTR("task_manager/reset_state");
+
+    // done once per frame, after the reset ended
+    poll_delayed_tasks();
   }
 }
 
