@@ -88,6 +88,21 @@ namespace neam::rle
     }
   };
 
+  /// \brief Work around the non-copiability of raw_data
+  struct default_value_t
+  {
+    default_value_t() = default;
+    ~default_value_t() = default;
+    default_value_t(raw_data&& dt) : data(std::move(dt)) {}
+    default_value_t(default_value_t&& o) : data(std::move(o.data)) {}
+    default_value_t(const default_value_t& o) : data(o.data.duplicate()) {}
+    default_value_t& operator =(default_value_t&& o) { data = std::move(o.data); return *this; }
+    default_value_t& operator =(const default_value_t& o) { data = o.data.duplicate(); return *this; }
+
+    raw_data data = {};
+  };
+
+
   /// \brief A reference to a type
   /// \note also used to provide attributes to the type-reference
   /// What attribute are provided are dependent on the encoder
@@ -123,8 +138,8 @@ namespace neam::rle
     type_mode mode;
 
     // optional, only for raw or tuple types. Always in byte.
-    // NOTE: for tuples, it is the actual size of the underlying C++ sturct, not the size of the serialized data
-    uint32_t size;
+    // NOTE: for tuples, it is the actual size of the underlying C++ struct, not the size of the serialized data
+    uint32_t size = 0;
 
     // tuple, container and variant have entries there
     // for tuple, they are in order of serialization
@@ -133,18 +148,17 @@ namespace neam::rle
     std::string name = {}; // filled by add_type
     type_hash_t hash = 0; // filled by add_type
 
-    // Version of the type. Only if the versionned flag is present.
+    // Version of the type. Only if the versioned flag is present.
     // TODO: support metadata for older versions too.
-    uint32_t version = 0;
+    uint32_t version = current_version;
 
-    // if not empty, the default value of the type
-    // prefer get_default_value() as using this one as it will always provide a value
-    // FIXME:
-//     raw_data default_value = {};
+    // if not empty, the default value of the type (only really used for struct)
+    // prefer using get_default_value() as it is not guaranteed to hold a value.
+    default_value_t default_value = {};
 
-    static type_metadata from(type_mode mode, std::vector<type_reference>&& refs, type_hash_t hash = 0)
+    static type_metadata from(type_mode mode, std::vector<type_reference>&& refs, type_hash_t hash = 0, raw_data&& default_value = {})
     {
-      return { mode, 0, std::move(refs), {}, hash };
+      return { mode, 0, std::move(refs), {}, hash, current_version, std::move(default_value) };
     }
     // raw:
     static type_metadata from(type_hash_t hash)
@@ -152,7 +166,7 @@ namespace neam::rle
       return { type_mode::raw, 0, {}, {}, hash };
     }
 
-    /// \brief Convert a type to a genereic representation of this type
+    /// \brief Convert a type to a generic representation of this type
     /// \note All metadata is stripped from the type-references
     type_metadata to_generic() const
     {
@@ -160,7 +174,7 @@ namespace neam::rle
       refs.reserve(contained_types.size());
       for (const auto& it : contained_types)
         refs.push_back({ it.hash, it.name, it.name_hash });
-      return { mode, 0, std::move(refs), {}, (mode == type_mode::raw ? hash : 0) };
+      return { mode, 0, std::move(refs), {}, (mode == type_mode::raw ? hash : 0), version, default_value };
     }
 
     /// \brief Return the index of the member that matches this name or k_invalid_index if not found
@@ -196,7 +210,7 @@ namespace neam::rle
   };
 
   // Can be used to decode / encode data in the RLE format used by this serializer
-  // This struct is versionned and can be serialized using RLE. (and thus metadata about this struct can be generated)
+  // This struct is versioned and can be serialized using RLE. (and thus metadata about this struct can be generated)
   struct serialization_metadata
   {
     static constexpr uint32_t min_supported_version = 0;
@@ -204,6 +218,8 @@ namespace neam::rle
 
     type_hash_t root;
     std::map<type_hash_t, type_metadata> types;
+
+    raw_data generate_default_value() const;
 
     const type_metadata& type(type_hash_t hash) const
     {
@@ -255,10 +271,14 @@ namespace neam::rle
     static type_reference ref(std::string member_name)
     {
       std::map<type_hash_t, raw_data> attr;
-      cr::for_each(TypeInfo::metadata_tuple, [&]<typename TIt>(const TIt& it)
+      cr::for_each(TypeInfo::metadata_tuple(), [&](const auto& it)
       {
-        if constexpr (concepts::SerializableStruct<TIt>)
-          attr.emplace(hash_of<TIt>(), rle::serialize(it));
+        using type = std::remove_cvref_t<decltype(it)>;
+        if constexpr (concepts::SerializableStruct<type>)
+        {
+          // FIXME: attribute metadata?
+          attr.emplace(hash_of<type>(), rle::serialize<type>(it));
+        }
       });
       return { hash_of<T>(), std::move(member_name), string_id::_runtime_build_from_string(member_name.data(), member_name.size()), std::move(attr), };
     }
@@ -294,6 +314,14 @@ N_METADATA_STRUCT(neam::rle::attribute_t)
   >;
 };
 
+N_METADATA_STRUCT(neam::rle::default_value_t)
+{
+  using member_list = neam::ct::type_list
+  <
+    N_MEMBER_DEF(data)
+  >;
+};
+
 N_METADATA_STRUCT(neam::rle::type_reference)
 {
   using member_list = neam::ct::type_list
@@ -314,8 +342,8 @@ N_METADATA_STRUCT(neam::rle::type_metadata)
     N_MEMBER_DEF(version),
     N_MEMBER_DEF(mode),
     N_MEMBER_DEF(name),
-    N_MEMBER_DEF(contained_types)/*,*/
-//     N_MEMBER_DEF(default_value)
+    N_MEMBER_DEF(contained_types),
+    N_MEMBER_DEF(default_value)
   >;
 };
 

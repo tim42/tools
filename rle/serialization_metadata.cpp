@@ -32,11 +32,11 @@ namespace neam::rle
   void type_metadata::get_default_value(const struct serialization_metadata& md, encoder& ec) const
   {
     // simple case: we already have a default_value
-//     if (default_value.size > 0)
-//     {
-//       memcpy(ec.allocate(default_value.size), default_value.data.get(), default_value.size);
-//       return;
-//     }
+    if (default_value.data.size > 0)
+    {
+      memcpy(ec.allocate(default_value.data.size), default_value.data.data.get(), default_value.data.size);
+      return;
+    }
 
     // hard case: no default value, go over the types and
     if (mode == type_mode::tuple || mode == type_mode::versioned_tuple)
@@ -48,7 +48,7 @@ namespace neam::rle
       return;
     }
 
-    // easy case: no default value, generate a eroed raw_data of the correct size and memset it to 0
+    // easy case: no default value, generate a zeroed raw_data of the correct size and memset it to 0
     uint32_t ret_size = 0;
     switch (mode)
     {
@@ -65,5 +65,13 @@ namespace neam::rle
 
     if (ret_size > 0)
       memset(ec.allocate(ret_size), 0, ret_size);
+  }
+
+  raw_data serialization_metadata::generate_default_value() const
+  {
+    cr::memory_allocator ma;
+    encoder ec(ma);
+    type(root).get_default_value(*this, ec);
+    return ec.to_raw_data();
   }
 }

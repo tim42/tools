@@ -102,7 +102,7 @@ namespace neam::rle
   generic_type generic_type::deserialize(const serialization_metadata& md, const type_metadata& type, const raw_data& rd)
   {
     decoder dc{rd};
-    return deserialize(md, type, rd);
+    return deserialize(md, type, dc);
   }
   generic_type generic_type::deserialize(const serialization_metadata& md, const type_metadata& type, decoder& dc)
   {
@@ -148,6 +148,7 @@ namespace neam::rle
         data.push_back(get_raw_data_for_type(md, md.type(ref.hash), dc));
       return { .mode = type.mode, .type_hash = type.hash, .version = version, .data = std::move(data) };
     }
+    return { .mode = type_mode::invalid, .type_hash = 0 };
   }
 
 
@@ -182,7 +183,7 @@ namespace neam::rle
   deep_generic_type deep_generic_type::deserialize(const serialization_metadata& md, const type_metadata& type, const raw_data& rd)
   {
     decoder dc{rd};
-    return deserialize(md, type, rd);
+    return deserialize(md, type, dc);
   }
   deep_generic_type deep_generic_type::deserialize(const serialization_metadata& md, const type_metadata& type, decoder& dc)
   {
@@ -228,6 +229,8 @@ namespace neam::rle
         data.push_back(deserialize(md, md.type(ref.hash), dc));
       return { .mode = type.mode, .type_hash = type.hash, .version = version, .data = std::move(data) };
     }
+
+    return { .mode = type_mode::invalid, .type_hash = 0 };
   }
 }
 

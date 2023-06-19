@@ -226,12 +226,37 @@ namespace neam::rle
         }.template operator()<Indices>(), ...);
       } (std::make_index_sequence<ct::list::size<typename n_metadata_member_definitions<T>::member_list>> {});
 
+      raw_data default_value;
+
+      if constexpr (std::is_default_constructible_v<T>
+        && !std::is_same_v<T, serialization_metadata>
+        && !std::is_same_v<T, type_metadata>
+        && !std::is_same_v<T, attribute_t>
+        && !std::is_same_v<T, default_value_t>
+        && !std::is_same_v<T, type_reference>
+      )
+      {
+        // only perform serialization if the type is default constructible, to avoid compilation errors.
+        status st = status::success;
+        cr::memory_allocator ma;
+        encoder ec(ma);
+        {
+          T dt;
+          encode(ec, dt, st);
+        }
+        if (st == status::success)
+        {
+          default_value = ec.to_raw_data();
+        }
+      }
+
       mt.add_type<T>(
       {
         .mode = type_mode::versioned_tuple,
         .size = sizeof(T),
         .contained_types = std::move(contained_types),
         .version = get_version(),
+        .default_value = std::move(default_value),
       });
     }
   };

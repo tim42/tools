@@ -83,7 +83,7 @@ namespace neam::rle
     // for variants: data.size() == 0 if the variant is empty, data.size() == 1 if the variant is non-empty.
     //             in that case, data[0] contains the relevant data and variant_index contains the index of the type (+1)
     std::vector<deep_generic_type> data = {};
-    raw_data raw_type_data;
+    raw_data raw_type_data = {};
 
 
     /// \brief Write (back) the type to the encoder
