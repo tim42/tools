@@ -54,6 +54,14 @@ namespace neam::cr
   }
 
   template<typename Fnc, typename... Args>
+  void for_each(std::tuple<Args...>&& t, Fnc&& fnc)
+  {
+    std::apply([&](auto&&... args)
+    {
+      (fnc(std::move(args)), ...);
+    }, t);
+  }
+  template<typename Fnc, typename... Args>
   void for_each(std::tuple<Args...>& t, Fnc&& fnc)
   {
     std::apply([&](auto&&... args)
@@ -64,9 +72,9 @@ namespace neam::cr
   template<typename Fnc, typename... Args>
   void for_each(const std::tuple<Args...>& t, Fnc&& fnc)
   {
-    std::apply([&](auto&&... args)
+    std::apply([&](const auto&... args)
     {
-      (fnc(args), ...);
+      (fnc((const Args&)(args)), ...);
     }, t);
   }
 
