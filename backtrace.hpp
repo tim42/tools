@@ -27,7 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_1145625880472195080_2067372013__BACKTRACE_HPP__
+#pragma once
 # define __N_1145625880472195080_2067372013__BACKTRACE_HPP__
 
 #ifdef __linux__
@@ -35,6 +35,7 @@
 #include <cxxabi.h>
 #include <stdlib.h>
 #include <string.h>
+#include <link.h>
 #endif
 
 #include "logger/logger.hpp"
@@ -53,7 +54,6 @@ namespace neam
 #ifdef __linux__
       char **strings;
       void *bt[backtrace_size + skip];
-
       int num = backtrace(bt, backtrace_size + skip);
       strings = backtrace_symbols(bt, num);
 
@@ -61,15 +61,32 @@ namespace neam
       logger.warn("#############[  B A C K T R A C E  ]#############"); 
       logger.warn("## most recent call first:"); 
 
+      std::vector<std::string> addr;
+      void* last_fname = nullptr;
+      addr.reserve(num);
       for (int j = skip; j < num; ++j)
       {
-        // extract the symbol from the string
         int i = 0;
         int k = 0;
+        // extract the symbol from the string
         for (; strings[j][i] && strings[j][i] != '('; ++i);
         if (strings[j][i]) ++i;
         for (; strings[j][i + k] && strings[j][i + k] != '+' && strings[j][i + k] != ')'; ++k);
         char *mangled = strndup(strings[j] + i, k);
+
+        // extract the address from the string
+        for (; strings[j][i] && strings[j][i] != '['; ++i);
+        if (strings[j][i]) ++i;
+        for (; strings[j][i + k] && strings[j][i + k] != ']'; ++k);
+        uint64_t fnc_addr = strtoul(strings[j] + i, nullptr, 0);
+
+        Dl_info info;
+        link_map* map;
+        dladdr1((void*)fnc_addr, &info, (void**)&map, RTLD_DL_LINKMAP);
+        if (last_fname != info.dli_fname || addr.empty())
+          addr.push_back(fmt::format(" addr2line -e {} -fipsC ", info.dli_fname));
+        addr.back() = fmt::format("{} {}", addr.back(), (void*)(fnc_addr - map->l_addr));
+        last_fname = (void*)info.dli_fname;
 
         // demangle the symbol
         int status;
@@ -86,28 +103,8 @@ namespace neam
         free(mangled);
       }
 
-      // print the indexes
-      std::vector<char*> addr;
-      addr.reserve(num);
-      for (int j = skip; j < num; ++j)
-      {
-        // extract the address from the string
-        int i = 0;
-        int k = 0;
-        for (; strings[j][i] && strings[j][i] != '['; ++i);
-        if (strings[j][i]) ++i;
-        for (; strings[j][i + k] && strings[j][i + k] != ']'; ++k);
-        char *fnc_addr = strndup(strings[j] + i, k);
-
-        addr.push_back(fnc_addr);
-      }
-
-      logger.warn("## addr2line -e {} -fipsC {}", program_invocation_name, fmt::join(addr, " "));
-
-      for (auto it : addr)
-      {
-        free(it);
-      }
+      // logger.warn("## addr2line -e {} -fipsC {}", program_invocation_name, fmt::join(addr, " "));
+      logger.warn("##  {}", fmt::join(addr, " ; "));
 
       logger.warn("########[  B A C K T R A C E     E N D  ]########");
 
@@ -117,7 +114,6 @@ namespace neam
   }
 } // namespace neam
 
-#endif /*__N_1145625880472195080_2067372013__BACKTRACE_HPP__*/
 
 // kate: indent-mode cstyle; indent-width 2; replace-tabs on;
 
