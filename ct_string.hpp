@@ -1,5 +1,3 @@
-// cr: a c++ template parser
-//
 // Copyright (c) 2012-2016 Timothée Feuillet
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -20,8 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-#ifndef __CR_STRING_HPP__
-#define __CR_STRING_HPP__
+#pragma once
 
 #include <initializer_list>
 #include <type_traits>
@@ -42,6 +39,8 @@ namespace neam
 
   namespace ct
   {
+    inline static constexpr size_t strlen(const char* const str);
+
     /// \brief Allows string litterals in templates
     template<size_t Count>
     struct string_holder
@@ -50,9 +49,17 @@ namespace neam
       {
         std::copy_n(_string, Count, string);
       }
+      consteval static string_holder from_c_string(const char* _string)
+      {
+        string_holder ret;
+        size_t len = ct::strlen(_string);
+        std::copy_n(_string, len < Count ? len : Count, ret.string);
+        return ret;
+      }
       consteval string_holder(const string_holder&) = default;
+      consteval string_holder() = default;
 
-      char string[Count];
+      char string[Count == 0 ? 1 : Count] = {0};
     };
 
     /// \brief C-String + Size from array
@@ -179,5 +186,17 @@ namespace neam
 template<neam::ct::string_holder h>
 constexpr const char (&c_string_t)[sizeof(h.string)] = neam::ct::string_storage_t<h>::string;
 
+#if __has_include(<fmt/format.h>)
+#include <fmt/format.h>
+template<> struct fmt::formatter<neam::ct::string>
+{
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
-#endif /*__CR_STRING_HPP__*/
+  template <typename FormatContext>
+  auto format(const neam::ct::string& v, FormatContext& ctx)
+  {
+    return fmt::format_to(ctx.out(), "{:{}}", v.str, v.size);
+  }
+};
+
+#endif
