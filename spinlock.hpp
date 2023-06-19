@@ -18,7 +18,7 @@
 //  - invalid unlocks (both wrong ownership and already unlocked)
 //  - invalid spinlock (mostly use-after-destruction)
 #ifndef N_ENABLE_LOCK_DEBUG
-  #define N_ENABLE_LOCK_DEBUG false
+  #define N_ENABLE_LOCK_DEBUG true
 #endif
 
 namespace neam
@@ -74,7 +74,7 @@ namespace neam
       }
 
       /// \brief Try to lock the lock, return whether the lock was acquired
-      bool try_lock()
+      [[nodiscard]] bool try_lock()
       {
 #if N_ENABLE_LOCK_DEBUG
         check_for_key();
@@ -145,7 +145,7 @@ namespace neam
         }
       }
 
-      bool _get_state() const
+      [[nodiscard]] bool _get_state() const
       {
 #if N_ENABLE_LOCK_DEBUG
         check_for_key();
@@ -153,7 +153,7 @@ namespace neam
         return lock_flag.test(std::memory_order_acquire);
       }
 
-      bool _relaxed_test() const
+      [[nodiscard]] bool _relaxed_test() const
       {
         return lock_flag.test(std::memory_order_relaxed);
       }
@@ -186,7 +186,7 @@ namespace neam
   class shared_spinlock
   {
     public:
-      bool try_lock_exclusive(bool wait_shared = true)
+      [[nodiscard]] bool try_lock_exclusive(bool wait_shared = true)
       {
         if (!exclusive_lock.try_lock())
         {
@@ -230,6 +230,48 @@ namespace neam
       void unlock_exclusive()
       {
         exclusive_lock.unlock();
+      }
+
+      /// \brief Migrate the lock from exclusive to shared
+      /// \note Guaranteed that no-one will grab an exclusive lock in between
+      void lock_shared_unlock_exclusive()
+      {
+        // increment the shared lock:
+        shared_count.fetch_add(1, std::memory_order_acquire);
+        // release the exclusive lock:
+        unlock_exclusive();
+      }
+
+      /// \brief Migrate the lock from shared to exclusive
+      /// \note There is no guarantee that someone will not steal the exclusive lock first
+      /// \return Indicate whether the operation was atomic or if someone acquired the lock before us.
+      ///         If the function returns false, a repeat of the operation done when the shared lock was held is probably a good idea
+      [[nodiscard]] bool lock_exclusive_unlock_shared()
+      {
+        if (!exclusive_lock.try_lock())
+        {
+          // Handle the case where someone already has the exclusive lock
+          // we have to realse our shared lock here, as the one with the exclusive lock is waiting for us
+          unlock_shared();
+          lock_exclusive();
+          // we did have to release the shared lock and wait for the exclusive lock
+          return false;
+        }
+
+        // we have the exclusive lock, release our shared lock
+        unlock_shared();
+        // and wait for the remaining shared locks to be released
+        if (shared_count.load(std::memory_order_seq_cst) != 0)
+        {
+          do
+          {
+            while (shared_count.load(std::memory_order_relaxed) != 0);
+          }
+          while (shared_count.load(std::memory_order_acquire) != 0);
+        }
+
+        // no got the exclusive lock in a single atomic operation
+        return true;
       }
 
       void lock_shared()
