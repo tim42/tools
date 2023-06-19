@@ -176,7 +176,7 @@ namespace neam::cmdline
       /// \note require a `std::vector< std::string_view > parameters;` member in the struct
       bool process_parameter(std::string_view arg_value)
       {
-        if constexpr (requires {concepts::HasParameterList<Struct>;})
+        if constexpr (requires {requires concepts::HasParameterList<Struct>;})
         {
           data.parameters.push_back(arg_value);
           return true;
@@ -204,9 +204,9 @@ namespace neam::cmdline
             // print the name:
             cr::out().log(" --{} (default value: `{}`, type: {})", name, member_at<member_type, member::offset>(v), ct::type_name<member_type>.str);
             // print some debug info if availlable:
-            if constexpr (ct::list::has_type<std::remove_cvref_t<decltype(member::metadata_tuple)>, metadata::info::metadata>)
+            if constexpr (ct::list::has_type<std::remove_cvref_t<decltype(member::metadata_tuple())>, metadata::info::metadata>)
             {
-              const metadata::info::metadata& mt_info = std::get<metadata::info::metadata>(member::metadata_tuple);
+              const metadata::info::metadata& mt_info = std::get<metadata::info::metadata>(member::metadata_tuple());
               if (!mt_info.description.empty())
               {
                 auto desc = neam::cr::split_string(mt_info.description, "\n");
