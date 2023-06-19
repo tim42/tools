@@ -27,9 +27,7 @@
 // SOFTWARE.
 //
 
-#ifndef __N_1298911746129055067_381318754_FNV1A_HPP__
-#define __N_1298911746129055067_381318754_FNV1A_HPP__
-
+#pragma once
 
 #include <cstdint>
 #include <cstddef>
@@ -133,5 +131,4 @@ namespace neam
   } // namespace ct
 } // namespace neam
 
-#endif // __N_1298911746129055067_381318754_FNV1A_HPP__
 
