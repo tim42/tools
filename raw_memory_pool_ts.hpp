@@ -251,15 +251,16 @@ namespace neam
             [[unlikely]] if (count == 1/* && (is_in_queue == false)*/)
             {
               if (chk->is_in_queue.exchange(true, std::memory_order_acquire) == false)
-              {
-                chk->allocation_count = 0;
-                chk->direct_alloc_offset = 0;
-
-                if (!push_chunk_to_queue(chk))
-                {
                   free_chunk(chk);
-                }
-              }
+//               {
+//                 chk->allocation_count = 0;
+//                 chk->direct_alloc_offset = 0;
+// 
+//                 if (!push_chunk_to_queue(chk))
+//                 {
+//                   free_chunk(chk);
+//                 }
+//               }
               return;
             }
           }
