@@ -206,7 +206,7 @@ namespace neam::cmdline
             // print some debug info if availlable:
             if constexpr (ct::list::has_type<std::remove_cvref_t<decltype(member::metadata_tuple())>, metadata::info::metadata>)
             {
-              const metadata::info::metadata& mt_info = std::get<metadata::info::metadata>(member::metadata_tuple());
+              const metadata::info::metadata mt_info = std::get<metadata::info::metadata>(member::metadata_tuple());
               if (!mt_info.description.empty())
               {
                 auto desc = neam::cr::split_string(mt_info.description, "\n");
