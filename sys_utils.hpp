@@ -28,12 +28,18 @@
 
 #include <cstdint>
 #include <string>
+#include <functional>
+
 
 namespace neam::sys
 {
   /// \brief Open an url/file using the user's preferred app
   void open_url(const std::string& url);
 
+  /// \brief Set the current thread affinity on a single cpu-thread. Only availlable on some platforms.
   void set_cpu_affinity(uint32_t thread_index);
+
+  void set_crash_handler(std::function<void(int /*signo*/, void* /*opt_addr*/)>&& fnc);
+  void clear_crash_handler();
 }
 

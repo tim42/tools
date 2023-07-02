@@ -28,10 +28,13 @@
 
 #include "sys_utils.hpp"
 
+#include <cstring>
+#include <fmt/format.h>
 #ifdef __unix__
   #include <unistd.h>
   #include <sys/wait.h>
   #include <sched.h>
+  #include <signal.h>
 #elif defined(_WIN32)
   #include <windows.h>
   #include <stringapiset.h>
@@ -42,7 +45,7 @@ namespace neam::sys
 #if defined(_WIN32)
   static std::wstring convert_to_ps(const std::string& as)
   {
-    // deal with trivial case of empty string
+    // deal with trivial cases
     if (as.empty()) return std::wstring();
 
     // determine required length of new string
@@ -54,7 +57,6 @@ namespace neam::sys
     // convert old string to new string
     ::MultiByteToWideChar(CP_UTF8, 0, as.c_str(), (int)as.length(), &ret[0], (int)ret.length());
 
-    // return new string ( compiler should optimize this away )
     return ret;
   }
 #endif
@@ -92,6 +94,45 @@ namespace neam::sys
     CPU_ZERO(&set);
     CPU_SET(thread_index, &set);
     sched_setaffinity(0, sizeof(cpu_set_t), &set);
+#endif
+  }
+
+  static std::function<void(int /*signo*/, void* /*opt_addr*/)> signal_handler;
+  static void _signal_handler_trp(int signo, siginfo_t* info, void* context)
+  {
+#ifdef __unix__
+    auto str = fmt::format("[signal: {} (code: {}, addr: {})]\n", signo, info->si_code, info->si_addr);
+    write(1, str.data(), str.size());
+    if (signal_handler)
+      signal_handler(signo, info->si_addr);
+    raise(signo);
+#endif
+  }
+
+  void set_crash_handler(std::function<void(int /*signo*/, void* /*opt_addr*/)>&& fnc)
+  {
+    signal_handler = fnc;
+#ifdef __unix__
+    struct sigaction s;
+    memset(&s, 0, sizeof(s));
+    s.sa_sigaction = &_signal_handler_trp;
+    s.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    sigaction(SIGSEGV, &s, nullptr);
+    sigaction(SIGFPE, &s, nullptr);
+    sigaction(SIGABRT, &s, nullptr);
+#endif
+  }
+
+  void clear_crash_handler()
+  {
+    signal_handler = {};
+#ifdef __unix__
+    struct sigaction s;
+    memset(&s, 0, sizeof(s));
+    s.sa_handler = SIG_DFL;
+    sigaction(SIGSEGV, &s, nullptr);
+    sigaction(SIGFPE, &s, nullptr);
+    sigaction(SIGABRT, &s, nullptr);
 #endif
   }
 }
