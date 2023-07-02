@@ -72,6 +72,7 @@ namespace neam::io
 
       static constexpr size_t whole_file = ~uint64_t(0);
       static constexpr size_t append = ~uint64_t(0); // for writes only, indicate we want to append
+      static constexpr size_t truncate = append - 1; // for writes only, indicate we want to truncate
 
       explicit context(const unsigned _queue_depth = k_max_open_file_count);
 
@@ -447,41 +448,38 @@ namespace neam::io
       template<typename RequestType>
       struct request
       {
-        mutable spinlock lock;
-        std::deque<RequestType> requests;
-        unsigned in_flight = 0;
+        cr::queue_ts<cr::queue_ts_wrapper<RequestType>> requests;
+        std::atomic<unsigned> in_flight = 0;
 
         size_t add_request(RequestType&& rq)
         {
-          std::lock_guard _l(lock);
-          requests.emplace_back(std::move(rq));
+          // std::lock_guard _l(lock);
+          // requests.emplace_back(std::move(rq));
+          requests.push_back(std::move(rq));
           return requests.size();
         }
 
         bool has_any_in_flight() const
         {
-          std::lock_guard _l(lock);
-          return in_flight != 0;
+          return in_flight.load(std::memory_order_acquire);
         }
         bool has_any_pending() const
         {
-          std::lock_guard _l(lock);
+          // std::lock_guard _l(lock);
           return !requests.empty();
         }
         void decrement_in_flight()
         {
-          std::lock_guard _l(lock);
-          in_flight -= 1;
+          in_flight.fetch_sub(1, std::memory_order_release);
         }
 
         unsigned get_in_flight_count() const
         {
-          std::lock_guard _l(lock);
-          return in_flight;
+          return in_flight.load(std::memory_order_acquire);
         }
         unsigned get_in_queued_count() const
         {
-          std::lock_guard _l(lock);
+          // std::lock_guard _l(lock);
           return (unsigned)requests.size();
         }
       };
@@ -544,7 +542,7 @@ namespace neam::io
     private: // functions:
       io_uring_sqe* get_sqe(bool should_process);
 
-      int open_file(id_t fid, bool read, bool write, bool truncate, bool& try_again);
+      int open_file(id_t fid, bool read, bool write, bool truncate, bool force_truncate, bool& try_again);
 
       id_t register_fd(file_descriptor fd);
       id_t register_socket(int fd, bool accept);

@@ -524,7 +524,7 @@ namespace neam::io
     return sqe;
   }
 
-  int context::open_file(id_t fid, bool read, bool write, bool truncate, bool& try_again)
+  int context::open_file(id_t fid, bool read, bool write, bool truncate, bool force_truncate, bool& try_again)
   {
     check::debug::n_assert(read || write, "io::context: cannot open a file with neither read nor write flags.");
     off_t offset = 0;
@@ -566,6 +566,8 @@ namespace neam::io
       }
       else
       {
+        if (force_truncate)
+          ftruncate(it->second.fd, 0);
         return it->second.fd;
       }
     }
@@ -590,7 +592,7 @@ namespace neam::io
       else if (write)
         flags = O_WRONLY|O_CREAT;
 
-      if (truncate)
+      if (truncate || force_truncate)
         flags |= O_TRUNC;
 
 //       const int fd = check::unx::n_check_code(open(it->second.c_str(), flags, 0644), "Failed to open {}", it->second.c_str());
@@ -746,13 +748,20 @@ namespace neam::io
     // so we can call the failed states outside the read lock
     std::vector<read_chain::state> failed_states;
 
+      // std::lock_guard _prl(read_requests.lock);
+    if (read_requests.requests.empty())
+      return;
+    std::deque<read_request> requests;
     {
-      std::lock_guard _prl(read_requests.lock);
-      if (read_requests.requests.empty())
-        return;
+      read_request rq;
+      while (read_requests.requests.try_pop_front(rq))
+        requests.emplace_back(std::move(rq));
+    }
+
+    {
       //cr::out().debug("queue_readv_operations: {} pending read operations", pending_reads.size());
       // sort reads by fid, so we have reads for the same file at the same place (better for readv)
-      std::sort(read_requests.requests.begin(), read_requests.requests.end(), [](const read_request& a, const read_request& b)
+      std::sort(requests.begin(), requests.end(), [](const read_request& a, const read_request& b)
       {
         if (a.fid == b.fid)
           return a.offset < b.offset;
@@ -761,28 +770,28 @@ namespace neam::io
 
       bool has_done_any_read = false;
 
-      while (read_requests.requests.size() > 0)
+      while (requests.size() > 0)
       {
-        if (read_requests.requests.front().state.is_canceled())
+        if (requests.front().state.is_canceled())
         {
-          read_requests.requests.pop_front();
+          requests.pop_front();
           continue;
         }
 
-        const id_t fid = read_requests.requests.front().fid;
+        const id_t fid = requests.front().fid;
 
         // check if the file is opened, else open it:
         bool try_again;
-        const int fd = open_file(fid, true, false, false, try_again);
+        const int fd = open_file(fid, true, false, false, false, try_again);
         if (fd < 0)
         {
           if (try_again)
             break;
           // fail all the queries for the same fid:
-          while (!read_requests.requests.empty() && fid == read_requests.requests.front().fid)
+          while (!requests.empty() && fid == requests.front().fid)
           {
-            failed_states.emplace_back(std::move(read_requests.requests.front().state));
-            read_requests.requests.pop_front();
+            failed_states.emplace_back(std::move(requests.front().state));
+            requests.pop_front();
           }
 
           continue;
@@ -791,36 +800,36 @@ namespace neam::io
         // Get a SQE
         io_uring_sqe* const sqe = get_sqe(has_done_any_read);
         if (!sqe)
-          return;
+          break;
         has_done_any_read = true;
 
         // Count the queries for the same file w/ contiguous queries:
         unsigned iovec_count = 1;
         {
-          size_t offset = read_requests.requests.front().offset + read_requests.requests.front().size;
-          for (; iovec_count < read_requests.requests.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
+          size_t offset = requests.front().offset + requests.front().size;
+          for (; iovec_count < requests.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
           {
-            if (fid != read_requests.requests[iovec_count].fid)
+            if (fid != requests[iovec_count].fid)
               break;
-            if (offset != read_requests.requests[iovec_count].offset)
+            if (offset != requests[iovec_count].offset)
               break;
-            offset += read_requests.requests[iovec_count].size;
+            offset += requests[iovec_count].size;
           }
         }
 
         // Allocate + fill the query structure:
         query* q = query::allocate(fid, query::type_t::read, iovec_count);
-        const size_t offset = read_requests.requests.front().offset;
+        const size_t offset = requests.front().offset;
 
         for (unsigned i = 0; i < iovec_count; ++i)
         {
-          q->iovecs[i].iov_len = read_requests.requests.front().size;
-          q->iovecs[i].iov_base = operator new(read_requests.requests.front().size);
-          q->read_states[i] = std::move(read_requests.requests.front().state);
+          q->iovecs[i].iov_len = requests.front().size;
+          q->iovecs[i].iov_base = operator new(requests.front().size);
+          q->read_states[i] = std::move(requests.front().state);
 
-          memset(q->iovecs[i].iov_base, 0, read_requests.requests.front().size); // so valgrind is happy, can be skipped
+          memset(q->iovecs[i].iov_base, 0, requests.front().size); // so valgrind is happy, can be skipped
 
-          read_requests.requests.pop_front();
+          requests.pop_front();
         }
 
         io_uring_prep_readv(sqe, fd, q->iovecs, iovec_count, offset);
@@ -839,6 +848,12 @@ namespace neam::io
       }
     } // lock scope
 
+    // if we have remaining requests, push them back:
+    for (auto& it : requests)
+    {
+      read_requests.add_request(std::move(it));
+    }
+
     // complete the failed states outside the readlock so that they can queue read operations
     for (auto& state : failed_states)
     {
@@ -851,14 +866,20 @@ namespace neam::io
     // so we can call the failed states outside the write lock
     std::vector<write_chain::state> failed_states;
 
+    // std::lock_guard _pwl(write_requests.lock);
+    if (write_requests.requests.empty())
+      return;
+    std::deque<write_request> requests;
     {
-      std::lock_guard _pwl(write_requests.lock);
-      if (write_requests.requests.empty())
-        return;
+      write_request rq;
+      while (write_requests.requests.try_pop_front(rq))
+        requests.emplace_back(std::move(rq));
+    }
+    {
       //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
 
       // sort reads by fid, so we have reads for the same file at the same place (better for readv)
-      std::sort(write_requests.requests.begin(), write_requests.requests.end(), [](const write_request& a, const write_request& b)
+      std::sort(requests.begin(), requests.end(), [](const write_request& a, const write_request& b)
       {
         if (a.fid == b.fid)
           return a.offset < b.offset;
@@ -867,28 +888,28 @@ namespace neam::io
 
       bool has_done_any_writes = false;
 
-      while (write_requests.requests.size() > 0)
+      while (requests.size() > 0)
       {
-        if (write_requests.requests.front().state.is_canceled())
+        if (requests.front().state.is_canceled())
         {
-          write_requests.requests.pop_front();
+          requests.pop_front();
           continue;
         }
 
-        const id_t fid = write_requests.requests.front().fid;
+        const id_t fid = requests.front().fid;
 
         // check if the file is opened, else open it:
         bool try_again;
-        const int fd = open_file(fid, false, true, write_requests.requests.front().offset == 0, try_again);
+        const int fd = open_file(fid, false, true, requests.front().offset == 0, requests.front().offset == truncate, try_again);
         if (fd < 0)
         {
           if (try_again)
             break;
           // fail all the queries for the same fid:
-          while (!write_requests.requests.empty() && fid == write_requests.requests.front().fid)
+          while (!requests.empty() && fid == requests.front().fid)
           {
-            failed_states.emplace_back(std::move(write_requests.requests.front().state));
-            write_requests.requests.pop_front();
+            failed_states.emplace_back(std::move(requests.front().state));
+            requests.pop_front();
           }
 
           continue;
@@ -897,30 +918,33 @@ namespace neam::io
         // Get a SQE
         io_uring_sqe* const sqe = get_sqe(has_done_any_writes);
         if (!sqe)
-          return;
+          break;
 
         has_done_any_writes = true;
 
         // Count the queries for the same file w/ contiguous queries:
         unsigned iovec_count = 1;
         {
-          const bool should_append = write_requests.requests.front().offset == append;
-          size_t offset = write_requests.requests.front().offset + write_requests.requests.front().data.size;
-          for (; iovec_count < write_requests.requests.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
+          const bool should_append = requests.front().offset == append;
+          const bool should_truncate = requests.front().offset == truncate;
+          size_t offset = requests.front().offset + requests.front().data.size;
+          for (; !should_truncate && iovec_count < requests.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
           {
-            if (fid != write_requests.requests[iovec_count].fid)
+            if (fid != requests[iovec_count].fid)
               break;
             if (!should_append)
             {
-              if (offset != write_requests.requests[iovec_count].offset)
+              if (offset != requests[iovec_count].offset)
                 break;
-              if (write_requests.requests[iovec_count].offset == append)
+              if (requests[iovec_count].offset == truncate)
                 break;
-              offset += write_requests.requests[iovec_count].data.size;
+              if (requests[iovec_count].offset == append)
+                break;
+              offset += requests[iovec_count].data.size;
             }
             else
             {
-              if (write_requests.requests[iovec_count].offset != append)
+              if (requests[iovec_count].offset != append)
                 break;
             }
           }
@@ -928,14 +952,14 @@ namespace neam::io
 
         // Allocate + fill the query structure:
         query* q = query::allocate(fid, query::type_t::write, iovec_count);
-        const size_t offset = write_requests.requests.front().offset;
+        const size_t offset = requests.front().offset == truncate ? 0 : requests.front().offset;
 
         for (unsigned i = 0; i < iovec_count; ++i)
         {
-          q->iovecs[i].iov_len = write_requests.requests.front().data.size;
-          q->iovecs[i].iov_base = write_requests.requests.front().data.data.release();
-          q->write_states[i] = std::move(write_requests.requests.front().state);
-          write_requests.requests.pop_front();
+          q->iovecs[i].iov_len = requests.front().data.size;
+          q->iovecs[i].iov_base = requests.front().data.data.release();
+          q->write_states[i] = std::move(requests.front().state);
+          requests.pop_front();
         }
 
         io_uring_prep_writev(sqe, fd, q->iovecs, iovec_count, offset);
@@ -957,6 +981,12 @@ namespace neam::io
       }
     } // lock scope
 
+    // if we have remaining requests, push them back:
+    for (auto& it : requests)
+    {
+      write_requests.add_request(std::move(it));
+    }
+
     // complete the failed states outside the readlock so that they can queue read operations
     for (auto& state : failed_states)
     {
@@ -966,36 +996,36 @@ namespace neam::io
 
   void context::queue_accept_operations()
   {
-    std::lock_guard _al(accept_requests.lock);
+    // std::lock_guard _al(accept_requests.lock);
     if (accept_requests.requests.empty())
       return;
     //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
 
     bool has_done_any_accepts = false;
 
-    while (accept_requests.requests.size() > 0)
+    accept_request rq;
+    while (accept_requests.requests.try_pop_front(rq))
     {
-      if (accept_requests.requests.front().state.is_canceled())
-      {
-        accept_requests.requests.pop_front();
+      if (rq.state.is_canceled())
         continue;
-      }
 
-      const id_t fid = accept_requests.requests.front().fid;
-      const int fd = accept_requests.requests.front().sock_fd;
+      const id_t fid = rq.fid;
+      const int fd = rq.sock_fd;
 
       // Get a SQE
       io_uring_sqe* const sqe = get_sqe(has_done_any_accepts);
       if (!sqe)
-        return;
+      {
+        accept_requests.add_request(std::move(rq));
+        break;
+      }
 
       has_done_any_accepts = true;
 
       // Allocate + fill the query structure:
       query* q = query::allocate(fid, query::type_t::accept, 0);
 
-      *(q->accept_state) = std::move(accept_requests.requests.front().state);
-      accept_requests.requests.pop_front();
+      *(q->accept_state) = std::move(rq.state);
 
       io_uring_prep_accept(sqe, fd, nullptr, nullptr, 0);
 
@@ -1018,29 +1048,26 @@ namespace neam::io
     std::vector<connect_chain::state> failed_states;
 
     {
-      std::lock_guard _al(connect_requests.lock);
+      // std::lock_guard _al(connect_requests.lock);
       if (connect_requests.requests.empty())
         return;
       //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
 
       bool has_done_any_connects = false;
 
-      while (connect_requests.requests.size() > 0)
+      connect_request rq;
+      while (connect_requests.requests.try_pop_front(rq) > 0)
       {
-        if (connect_requests.requests.front().state.is_canceled())
-        {
-          connect_requests.requests.pop_front();
+        if (rq.state.is_canceled())
           continue;
-        }
 
-        const id_t fid = connect_requests.requests.front().fid;
-        const int fd = connect_requests.requests.front().sock_fd;
+        const id_t fid = rq.fid;
+        const int fd = rq.sock_fd;
 
         addrinfo* result;
-        if (check::unx::n_check_success(getaddrinfo(connect_requests.requests.front().addr.c_str(), nullptr, nullptr, &result)) < 0)
+        if (check::unx::n_check_success(getaddrinfo(rq.addr.c_str(), nullptr, nullptr, &result)) < 0)
         {
-          failed_states.push_back(std::move(connect_requests.requests.front().state));
-          connect_requests.requests.pop_front();
+          failed_states.push_back(std::move(rq.state));
           continue;
         }
 
@@ -1049,7 +1076,8 @@ namespace neam::io
         if (!sqe)
         {
           freeaddrinfo(result);
-          return;
+          connect_requests.add_request(std::move(rq));
+          break;
         }
 
         has_done_any_connects = true;
@@ -1057,8 +1085,7 @@ namespace neam::io
         // Allocate + fill the query structure:
         query* q = query::allocate(fid, query::type_t::connect, 0);
 
-        *(q->connect_state) = std::move(connect_requests.requests.front().state);
-        connect_requests.requests.pop_front();
+        *(q->connect_state) = std::move(rq.state);
 
         io_uring_prep_connect(sqe, fd, result->ai_addr, result->ai_addrlen);
 
@@ -1084,12 +1111,11 @@ namespace neam::io
 
   void context::process_deferred_operations()
   {
-    while (deferred_requests.requests.size() > 0)
+    deferred_request rq;
+    while (deferred_requests.requests.try_pop_front(rq))
     {
-      if (!deferred_requests.requests.front().state.is_canceled())
-        deferred_requests.requests.front().state.complete();
-
-      deferred_requests.requests.pop_front();
+      if (!rq.state.is_canceled())
+        rq.state.complete();
     }
   }
 

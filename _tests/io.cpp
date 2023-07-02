@@ -68,7 +68,7 @@ int main(int argc, char**argv)
     // (will effectively issue a single write as they are all append writes)
     // ((Note, this is quite slow, as there is a lot of small bit of data scattering everywhere in memory)
 
-    ctx.queue_write(file_1, 0, raw_data::allocate_from(std::string("FILE_1 CONTENT:\n")));
+    ctx.queue_write(file_1, io::context::truncate, raw_data::allocate_from(std::string("FILE_1 CONTENT:\n")));
 
     {
       const std::string some_data("more and more data!\n");
@@ -86,7 +86,7 @@ int main(int argc, char**argv)
     // much lower than file_1 as each write wait for the previous write to end
     // NOTE: there is no recursion in there. All calls are flattened by async::chain
 
-    ctx.queue_write(file_2, 0, raw_data::allocate_from(std::string("FILE_2 CONTENT:\n")));
+    ctx.queue_write(file_2, io::context::truncate, raw_data::allocate_from(std::string("FILE_2 CONTENT:\n")));
 
     std::function<io::context::write_chain()> file_2_queue_write; // must live during the _wait_for_submit_queries
     {
@@ -120,7 +120,7 @@ int main(int argc, char**argv)
     ctx.queue_read(file_1, 0, io::context::whole_file)
     .then([=, &ctx](raw_data&& data, bool /*success*/)
     {
-      return ctx.queue_write(file_3, 0, std::move(data));
+      return ctx.queue_write(file_3, io::context::truncate, std::move(data));
     })
     .then([&](bool) // instead of nesting async which is recursive and ugly,
                    // returning a chain flattens the calls
