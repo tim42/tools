@@ -30,6 +30,18 @@
 #include <fmt/format.h>
 #include "type_id.hpp"
 
+#include <filesystem>
+template<> struct fmt::formatter<std::filesystem::path> : fmt::formatter<std::string>
+{
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const std::filesystem::path& v, FormatContext& ctx)
+  {
+    return fmt::formatter<std::string>::format((std::string)v, ctx);
+  }
+};
+
 #include <tuple>
 template<typename... Args> struct fmt::formatter<std::tuple<Args...>>
 {
