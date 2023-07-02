@@ -42,6 +42,40 @@ namespace neam::threading
     TRACY_PLOT_CONFIG_EX_CSTR("task_manager::delayed_tasks", tracy::PlotFormatType::Number, true, 0x7f117fff);
   }
 
+  void task_manager::request_stop(function_t&& on_stopped, bool flush_all_delayed_tasks)
+  {
+    std::lock_guard _ul(spinlock_exclusive_adapter::adapt(frame_state.stopping_lock));
+    frame_state.should_stop = true;
+    check::debug::n_check(!frame_state.on_stopped, "task_manager::request_stop: stop already requested, with a fallback already registered. This is undefined behavior.");
+    frame_state.on_stopped = std::move(on_stopped);
+    if (flush_all_delayed_tasks)
+      poll_delayed_tasks(true);
+  }
+
+  bool task_manager::try_request_stop(function_t&& on_stopped, bool flush_all_delayed_tasks)
+  {
+    std::lock_guard _ul(spinlock_exclusive_adapter::adapt(frame_state.stopping_lock));
+    if (frame_state.should_stop)
+      return false;
+    frame_state.should_stop = true;
+    frame_state.on_stopped = std::move(on_stopped);
+    if (flush_all_delayed_tasks)
+      poll_delayed_tasks(true);
+    return true;
+  }
+
+  bool task_manager::is_stop_requested() const
+  {
+    std::lock_guard _ul(spinlock_shared_adapter::adapt(frame_state.stopping_lock));
+    return frame_state.should_stop;
+  }
+
+  void task_manager::_flush_all_delayed_tasks()
+  {
+    poll_delayed_tasks(true);
+  }
+
+
   void task_manager::set_start_task_group_callback(group_t group, function_t&& fnc)
   {
     check::debug::n_assert(group < frame_state.groups.size(), "group {} does not exists", group);
@@ -57,6 +91,7 @@ namespace neam::threading
   task_wrapper task_manager::get_task(group_t task_group, function_t&& func)
   {
     check::debug::n_assert(task_group < frame_state.groups.size(), "Trying to create a task from a task group that does not exists. Did you forgot to create a task group?");
+    check::debug::n_check(!frame_state.ensure_on_task_insertion, "task for task-group {} created while the ensure flag is on", task_group);
 
     if (task_group == k_non_transient_task_group)
       return get_long_duration_task(std::move(func));
@@ -72,6 +107,7 @@ namespace neam::threading
 
   task_wrapper task_manager::get_long_duration_task(function_t&& func)
   {
+    check::debug::n_check(!frame_state.ensure_on_task_insertion, "long-duration task created while the ensure flag is on");
     frame_state.groups[k_non_transient_task_group].remaining_tasks.fetch_add(1, std::memory_order_release);
 
     task* ptr = non_transient_tasks.allocate();
@@ -81,11 +117,12 @@ namespace neam::threading
     return *ptr;
   }
 
-  task_wrapper task_manager::get_delayed_task(function_t&& func, std::chrono::milliseconds delay)
+  task_wrapper task_manager::get_delayed_task(std::chrono::milliseconds delay, function_t&& func)
   {
     const auto execution_time_point = std::chrono::high_resolution_clock::now() + delay;
     task_wrapper tw = get_long_duration_task(std::move(func));
-    tw.get_task().execution_time_point = execution_time_point;
+    if (!frame_state.frame_lock._get_state() || frame_state.should_stop)
+      tw.get_task().execution_time_point = execution_time_point;
     return tw;
   }
 
@@ -151,15 +188,12 @@ namespace neam::threading
 
     t.set_task_as_waiting_to_run();
 
-    const uint32_t index = frame_state.groups[t.key].insert_buffer_index.fetch_add(1, std::memory_order_acquire);
-
     // don't wake waiting thread when the task is not really usable (group hasn't started yet)
     if (t.key == k_non_transient_task_group
         || frame_state.groups[t.key].will_start.load(std::memory_order_seq_cst)
         || frame_state.groups[t.key].is_started.load(std::memory_order_seq_cst))
     {
       [[maybe_unused]] const uint32_t count = frame_state.tasks_that_can_run.fetch_add(1, std::memory_order_release);
-      //frame_state.tasks_that_can_run.notify_one();
       TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)(count + 1));
     }
     else
@@ -168,8 +202,7 @@ namespace neam::threading
       frame_state.groups[t.key].tasks_that_can_run.fetch_add(1, std::memory_order_seq_cst);
     }
 
-    bool is_inserted = frame_state.groups[t.key].tasks_to_run[index % group_info_t::k_task_to_run_size].push_back(&t);
-    check::debug::n_assert(is_inserted, "ring buffer overflow in the task_manager (group: {})", t.key);
+    frame_state.groups[t.key].tasks_to_run.push_back(&t);
   }
 
   void task_manager::add_compiled_frame_operations(resolved_graph&& _frame_ops)
@@ -359,7 +392,6 @@ namespace neam::threading
                 const bool was_started = group_info.is_started.exchange(true, std::memory_order_seq_cst);
                 check::debug::n_assert(!was_started, "Invalid frame operation: execute_task_group: task group was already started");
 
-                //frame_state.tasks_that_can_run.notify_all();
                 group_info.will_start.store(false, std::memory_order_seq_cst);
 
                 ++chain.index;
@@ -419,12 +451,9 @@ namespace neam::threading
       if (group_info.remaining_tasks.load(std::memory_order_acquire) == 0)
         continue;
 
-      const uint32_t base_index = group_info.insert_buffer_index.load(std::memory_order_relaxed) + 2;
-      for (uint32_t j = 0; j < group_info_t::k_task_to_run_size; ++j)
       {
-        bool has_task = false;
-        task* ptr = group_info.tasks_to_run[(j + base_index) % group_info_t::k_task_to_run_size].pop_front(has_task);
-//         task* ptr = group_info.tasks_to_run[(j + base_index) % group_info_t::k_task_to_run_size].quick_pop_front(has_task);
+        task* ptr = nullptr;
+        const bool has_task = group_info.tasks_to_run.try_pop_front(ptr);
         if (!has_task)
           continue;
         check::debug::n_assert(ptr != nullptr, "Corrupted task data");
@@ -453,9 +482,11 @@ namespace neam::threading
   {
     TRACY_SCOPED_ZONE_COLOR(0x00FF00);
     const group_t previous_gid = thread_state().current_gid;
+    frame_state.running_tasks.fetch_add(1, std::memory_order_relaxed);
     thread_state().current_gid = task.get_task_group();
     task.run();
     thread_state().current_gid = previous_gid;
+    frame_state.running_tasks.fetch_sub(1, std::memory_order_relaxed);
   }
 
 
@@ -496,6 +527,8 @@ namespace neam::threading
       // (the frame lock is effectively a freeze of the task-manager and using it means perfs are not critical)
       while (frame_state.frame_lock._relaxed_test())
       {
+        if (frame_state.should_threads_leave)
+          return;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
       }
 
@@ -590,6 +623,13 @@ namespace neam::threading
   bool task_manager::has_pending_tasks() const
   {
     if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
+      return true;
+    return false;
+  }
+
+  bool task_manager::has_running_tasks() const
+  {
+    if (frame_state.running_tasks.load(std::memory_order_acquire) > 0)
       return true;
     return false;
   }

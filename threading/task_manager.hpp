@@ -34,6 +34,7 @@
 #include "../frame_allocation.hpp"
 #include "../ring_buffer.hpp"
 #include "../spinlock.hpp"
+#include "../queue_ts.hpp"
 
 #include <chrono>
 #include <atomic>
@@ -58,13 +59,19 @@ namespace neam::threading
       /// \brief Will stop the task manager next frame
       /// \note the frame_lock (get_frame_lock()) will be locked. Unlocking it will resume the operations.
       /// \note long-duration tasks are not affected by this and can continue to run
-      void request_stop(function_t&& on_stopped, bool flush_all_delayed_tasks = false)
-      {
-        frame_state.should_stop = true;
-        frame_state.on_stopped = std::move(on_stopped);
-        if (flush_all_delayed_tasks)
-          poll_delayed_tasks(true);
-      }
+      void request_stop(function_t&& on_stopped, bool flush_all_delayed_tasks = false);
+
+      bool try_request_stop(function_t&& on_stopped, bool flush_all_delayed_tasks = false);
+
+      /// \brief Return whether the task manager is already tasked to stop this frame
+      bool is_stop_requested() const;
+
+      /// \brief When shutting-down the task manager, some threads may be in the wait_for_a_task function.
+      ///        This cause them to exit that function without doing anything.
+      /// \note Only work when the frame-lock is held
+      void should_threads_exit_wait(bool should) { frame_state.should_threads_leave = should; }
+
+      void _flush_all_delayed_tasks();
 
     public: // task group stuff. WARNING MUST BE CALLED BEFORE ANY CALL TO get_task()
       /// \brief Add the compiled frame operations
@@ -132,7 +139,7 @@ namespace neam::threading
       /// \warning Spawning any non-long duration tasks from within a long-duration task is undefined behavior and may lead to crashs
       /// \warning Should not be spammed as it does have a super high contention problem at task insertion and is very very slow overall
       /// \note delayed task will have the lowest priority if they didn't reach their delay at insertion
-      task_wrapper get_delayed_task(function_t&& func, std::chrono::milliseconds delay);
+      task_wrapper get_delayed_task(std::chrono::milliseconds delay, function_t&& func);
 
       /// \brief tentatively run a task
       ///
@@ -177,10 +184,14 @@ namespace neam::threading
       /// This does not include tasks that are pending but whose task-group is not yet started
       bool has_pending_tasks() const;
 
+      bool has_running_tasks() const;
+
       /// \brief Return the number of pending tasks
       /// \see has_pending_tasks
       uint32_t get_pending_tasks_count() const;
 
+      /// \brief Usefull for debugging what is continually inserting tasks when tasks should not be inserted
+      void should_ensure_on_task_insertion(bool should_ensure) { frame_state.ensure_on_task_insertion = should_ensure; }
 
     public: // state stuff, must be called from within a task (or have a task in scope)
             // WARNING: ALL THOSE FUNCTIONS MIGHT BREAK IF THERE ARE MULTIPLE TASK_MANAGERS
@@ -214,7 +225,7 @@ namespace neam::threading
 
       void poll_delayed_tasks(bool force_push = false);
 
-      static void do_run_task(task& task);
+      void do_run_task(task& task);
 
     private:
       // Tasks that belong to a task group. Deletion is done at the end of the frame (no need to manually deallocate tasks this way)
@@ -231,9 +242,7 @@ namespace neam::threading
 
       struct group_info_t
       {
-        static constexpr uint32_t k_task_to_run_size = 8;
-        cr::ring_buffer<task*, 32768> tasks_to_run[k_task_to_run_size];
-        std::atomic<uint32_t> insert_buffer_index = 0;
+        cr::queue_ts<cr::queue_ts_atomic_wrapper<task*>> tasks_to_run;
         std::atomic<uint32_t> remaining_tasks = 0;
         std::atomic<bool> is_completed = false;
         std::atomic<bool> is_started = false;
@@ -280,6 +289,7 @@ namespace neam::threading
         sorted_task_list_t delayed_tasks;
 
         alignas(64) std::atomic<uint32_t> tasks_that_can_run = 0;
+        std::atomic<uint32_t> running_tasks = 0;
         std::atomic<uint32_t> ended_chains = 0;
 
         // so we can avoid spinning the advance function and instead wait
@@ -290,8 +300,12 @@ namespace neam::threading
         // used to stop the frame from progressing
         // (usefull during the boot process)
         spinlock frame_lock;
+
+        mutable shared_spinlock stopping_lock; // protects on-stopped and should-stop
         function_t on_stopped;
         bool should_stop = false;
+        bool ensure_on_task_insertion = false;
+        bool should_threads_leave = false; // require the frame-lock to be held, will cause threads to exit
       };
       frame_state_t frame_state;
 
