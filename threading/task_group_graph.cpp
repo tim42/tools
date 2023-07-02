@@ -38,24 +38,33 @@ namespace neam::threading
       return 0xFF;
     }
 
-    ++task_group_id;
-
-    if (group_names.contains(id))
+    if (auto it = group_names.find(id); it != group_names.end())
     {
       cr::out().warn("threading::dependency-graph: Skipping add_task_group call as a group with the name {} is already added (group skipped: {})", id, key);
-      return key;
+      return it->second;
     }
 
     if (dependencies.contains(key))
     {
-      cr::out().warn("threading::dependency-graph: Skipping add_task_group call as {} is already added", key);
-      return key;
+      cr::out().error("threading::dependency-graph: Incorrect state: group {} is only partially present", id);
+      return 0;
     }
+
+    ++task_group_id;
     group_names.emplace(id, key);
     debug_names.emplace(key, std::move(group_debug_name));
     roots.emplace(key);
     dependencies.emplace(key, links{});
     return key;
+  }
+
+  group_t task_group_dependency_tree::get_group(id_t group) const
+  {
+    if (auto it = group_names.find(group); it != group_names.end())
+    {
+      return it->second;
+    }
+    return 0;
   }
 
   void task_group_dependency_tree::add_dependency(group_t group, group_t dependency)

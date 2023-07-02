@@ -115,6 +115,12 @@ namespace neam::threading
 
       void add_dependency(id_t group, id_t dependency);
 
+      /// \brief Return the group for a given id
+      /// \note Return 0 if not found
+      group_t get_group(id_t group) const;
+
+      group_t get_group_count() const { return task_group_id; }
+
       /// \brief output the IR
       resolved_graph compile_tree();
 
