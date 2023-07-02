@@ -44,12 +44,19 @@ namespace neam
     template<> [[maybe_unused]] constexpr int16_t integer_v<2, true> = 0;
     template<> [[maybe_unused]] constexpr int32_t integer_v<4, true> = 0;
     template<> [[maybe_unused]] constexpr int64_t integer_v<8, true> = 0;
+    template<> [[maybe_unused]] constexpr __int128 integer_v<16, true> = 0;
+    // template<> [[maybe_unused]] constexpr _BitInt(256) integer_v<32, true> = 0;
+
     template<> [[maybe_unused]] constexpr uint8_t integer_v<1, false> = 0;
     template<> [[maybe_unused]] constexpr uint16_t integer_v<2, false> = 0;
     template<> [[maybe_unused]] constexpr uint32_t integer_v<4, false> = 0;
     template<> [[maybe_unused]] constexpr uint64_t integer_v<8, false> = 0;
+    template<> [[maybe_unused]] constexpr unsigned __int128 integer_v<16, false> = 0;
+    // template<> [[maybe_unused]] constexpr unsigned _BitInt(256) integer_v<32, false> = 0;
 
-    template<size_t Size, bool Signed = true>
-    using integer_t = std::remove_cv_t<decltype(integer_v<Size, Signed>)>;
+    template<size_t Size>
+    using sint_t = std::remove_cv_t<decltype(integer_v<Size, true>)>;
+    template<size_t Size>
+    using uint_t = std::remove_cv_t<decltype(integer_v<Size, false>)>;
   } // namespace ct
 } // namespace neam
