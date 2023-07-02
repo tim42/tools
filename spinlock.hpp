@@ -11,7 +11,6 @@
 #include <atomic>
 #include <thread>
 #include <new>
-
 // Add a ton of checks on the locks, at the cost of performance
 // Checks for:
 //  - deadlocks
@@ -20,7 +19,11 @@
 #ifndef N_ENABLE_LOCK_DEBUG
   #define N_ENABLE_LOCK_DEBUG true
 #endif
-
+#if N_ENABLE_LOCK_DEBUG
+  #ifdef __linux__
+    #include <execinfo.h>
+  #endif
+#endif
 namespace neam
 {
   namespace spinlock_internal
@@ -32,6 +35,19 @@ namespace neam
     // 64 bytes on x86-64 │ L1_CACHE_BYTES │ L1_CACHE_SHIFT │ __cacheline_aligned │ ...
     constexpr std::size_t hardware_constructive_interference_size = 64;
     constexpr std::size_t hardware_destructive_interference_size = 64;
+#endif
+#if N_ENABLE_LOCK_DEBUG
+  #ifdef __linux__
+    inline void print_backtrace()
+    {
+      constexpr uint32_t k_buff_size = 100;
+      void* buffer[k_buff_size];
+      int nptrs = backtrace(buffer, k_buff_size);
+      backtrace_symbols_fd(buffer, nptrs, 0);
+    }
+  #else
+    static void print_backtrace() {}
+  #endif
 #endif
   }
 
@@ -62,8 +78,24 @@ namespace neam
         if (owner_id == std::this_thread::get_id())
         {
           printf("[spinlock: deadlock detected in lock()]\n");
+          spinlock_internal::print_backtrace();
           abort();
         }
+#endif
+        while (true)
+        {
+          if (try_lock())
+            return;
+          while (_relaxed_test());
+        }
+      }
+
+      /// \brief Lock the lock. Only return when the lock was acquired.
+      /// Don't check if the thread has lock ownership
+      void _lock()
+      {
+#if N_ENABLE_LOCK_DEBUG
+        check_for_key();
 #endif
         while (true)
         {
@@ -97,11 +129,13 @@ namespace neam
         if (!lock_flag.test())
         {
           printf("[spinlock: invalid unlock detected in unlock() (unlocking an unlocked mutex)]\n");
+          spinlock_internal::print_backtrace();
           abort();
         }
         if (owner_id != std::this_thread::get_id())
         {
           printf("[spinlock: invalid unlock detected in unlock() (unlocking a lock that the current thread did not lock)]\n");
+          spinlock_internal::print_backtrace();
           abort();
         }
 
@@ -118,6 +152,7 @@ namespace neam
         if (!lock_flag.test())
         {
           printf("[spinlock: invalid unlock detected in unlock() (unlocking an unlocked mutex)]\n");
+          spinlock_internal::print_backtrace();
           abort();
         }
 
@@ -136,6 +171,7 @@ namespace neam
         if (owner_id == std::this_thread::get_id())
         {
           printf("[spinlock: deadlock detected in _wait_for_lock()]\n");
+          spinlock_internal::print_backtrace();
           abort();
         }
 #endif
@@ -170,11 +206,13 @@ namespace neam
         if (key == k_destructed_key_value)
         {
           printf("[spinlock: invalid lock: trying to do operations after lock destruction]\n");
+          spinlock_internal::print_backtrace();
           abort();
         }
         if (key != k_key_value)
         {
           printf("[spinlock: invalid lock: memory area is not a lock]\n");
+          spinlock_internal::print_backtrace();
           abort();
         }
 
@@ -298,6 +336,7 @@ namespace neam
         if (ret < 0)
         {
           printf("[shared_spinlock: invalid unlock: double/invalid shared unlock detected]\n");
+          spinlock_internal::print_backtrace();
           abort();
         }
 #endif
