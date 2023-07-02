@@ -26,7 +26,9 @@
 
 #pragma once
 
+#include <string>
 #include <string_view>
+#include <filesystem>
 #include <charconv>
 #include "../logger/logger.hpp"
 
@@ -43,6 +45,20 @@ namespace neam::cmdline::helper
   {
     static constexpr bool is_valid_type = true;
     static std::string_view convert(std::string_view v, bool& /*valid*/) { return v; }
+  };
+
+  template<>
+  struct from_string<std::string>
+  {
+    static constexpr bool is_valid_type = true;
+    static std::string convert(std::string_view v, bool& /*valid*/) { return std::string{v}; }
+  };
+
+  template<>
+  struct from_string<std::filesystem::path>
+  {
+    static constexpr bool is_valid_type = true;
+    static std::filesystem::path convert(std::string_view v, bool& /*valid*/) { return {v}; }
   };
 
   template<>
