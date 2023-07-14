@@ -1,9 +1,9 @@
 //
 // created by : Timothée Feuillet
-// date: 2022-1-21
+// date: 2023-7-14
 //
 //
-// Copyright (c) 2022 Timothée Feuillet
+// Copyright (c) 2023 Timothée Feuillet
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -26,24 +26,41 @@
 
 #pragma once
 
-#include <functional>
-#include <cstdint>
+#include <map>
 
-// waiting for std::move_only_function to be availlable, here is a ~drop-in replacement
-#include "../async/internal_do_not_use_cpp23_replacement/function2.hpp"
-
+#include "../id/string_id.hpp"
+#include "types.hpp"
 
 namespace neam::threading
 {
-//           std::move_only_function
-  using function_t = fu2::unique_function<void()>;
+  /// \brief Named thread configuration struct.
+  struct named_thread_configuration
+  {
+    // NOTE: Those flags applies only to tasks not tagged with a specific named-thread
+    // Tasks that are tagged with this thread will take priority over those not
+    // NOTE: Running a general tasks will be more costly for a named thread
+    bool can_run_general_tasks = true;
+    bool can_run_general_long_duration_tasks = false;
+  };
 
-  using group_t = uint8_t;
-  static constexpr group_t k_non_transient_task_group = 0;
-  static constexpr group_t k_invalid_task_group = ~group_t(0);
+  struct resolved_threads_configuration
+  {
+    std::map<id_t, named_thread_t> named_threads;
+    std::map<group_t, std::string> debug_names;
+    std::map<named_thread_t, named_thread_configuration> configuration;
 
-  using named_thread_t = uint8_t;
-  static constexpr named_thread_t k_no_named_thread = 0;
-  static constexpr named_thread_t k_invalid_named_thread = ~named_thread_t(0);
+    void print_debug();
+  };
+
+  class threads_configuration
+  {
+    public:
+      named_thread_t add_named_thread(string_id id, named_thread_configuration conf = {});
+
+      resolved_threads_configuration get_configuration() { return rtc; }
+    private:
+      resolved_threads_configuration rtc;
+      named_thread_t named_thread_id = 1;
+  };
 }
 

@@ -103,8 +103,8 @@ namespace neam::threading
       task& then(function_t&& fnc);
 
   private:
-      task(task_manager& _manager, group_t _key, uint32_t _frame_key, function_t _function)
-      : manager(_manager), function(std::move(_function)), key(_key), frame_key(_frame_key)
+      task(task_manager& _manager, group_t _key, named_thread_t _nt_key, uint32_t _frame_key, function_t _function)
+      : manager(_manager), function(std::move(_function)), key(_key), thread_key(_nt_key), frame_key(_frame_key)
       {
         memset(tasks_to_notify, 0, sizeof(tasks_to_notify));
       }
@@ -191,17 +191,19 @@ namespace neam::threading
 
       static constexpr uint32_t k_max_task_to_notify = 8;
 
-      mutable spinlock lock;
 
+      mutable spinlock lock;
       task_manager& manager;
       function_t function;
+
       group_t key;
+      named_thread_t thread_key;
 
       // Avoids being pushed-to-run when the task is still held by the wrapper.
       // This may happens when creating and dispatching dependencies of a task and contention haappens
       bool held_by_wrapper = true;
 
-      // [16 bits free here]
+      // [8 bits free here (+7 in held_by_wrapper)]
 
       uint32_t number_of_task_to_notify = 0;
       uint32_t dependencies = 0;

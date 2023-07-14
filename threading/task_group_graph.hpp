@@ -31,7 +31,7 @@
 #include <map>
 
 #include "types.hpp"
-#include "../id/id.hpp"
+#include "../id/string_id.hpp"
 
 namespace neam::threading
 {
@@ -91,12 +91,23 @@ namespace neam::threading
     static_assert(sizeof(arg) >= sizeof(group_t));
   };
 
+  struct group_configuration
+  {
+    // Indicate whether that task-group is restricted on (a) specific thread(s)
+    // If not id_t::none, only threads with that name will be able to run those tasks
+    // If id_t::none, only untagged threads and named threads with can_run_other_tasks to true will be able to run those tasks
+    // NOTE: Because there's only one thread (maybe more) that will participate on those tasks, special care should be taken to not make that group a bottleneck.
+    id_t restrict_to_named_thread = id_t::none;
+  };
+
+  /// \brief Representation of the dependency graph that can be passed to the task-manager.
   struct resolved_graph
   {
     std::map<id_t, group_t> groups;
     uint32_t chain_count;
     std::vector<ir_opcode> opcodes;
     std::map<group_t, std::string> debug_names;
+    std::map<group_t, group_configuration> configuration;
 
     void print_debug() const;
   };
@@ -107,7 +118,7 @@ namespace neam::threading
   {
     public:
       /// \brief Add a task group. Cannot be task::k_non_transient_task_group.
-      group_t add_task_group(id_t id, std::string group_debug_name);
+      group_t add_task_group(string_id id, group_configuration conf = {});
 
       /// \brief makes \p group dependent on \p dependency
       /// (\p group will not execute before \p dependency has completed all its tasks)
@@ -140,6 +151,7 @@ namespace neam::threading
       std::set<group_t> roots;
       std::map<group_t, links> dependencies;
       std::map<group_t, std::string> debug_names;
+      std::map<group_t, group_configuration> configuration;
 
       group_t task_group_id = 1;
   };
@@ -147,7 +159,7 @@ namespace neam::threading
   
 }
 
-// So we can serialize the IR (and store it as an asset)
+// So we can serialize the IR
 #include "../struct_metadata/struct_metadata.hpp"
 
 N_METADATA_STRUCT(neam::threading::ir_opcode)
@@ -159,6 +171,14 @@ N_METADATA_STRUCT(neam::threading::ir_opcode)
   >;
 };
 
+N_METADATA_STRUCT(neam::threading::group_configuration)
+{
+  using member_list = neam::ct::type_list
+  <
+    N_MEMBER_DEF(restrict_to_named_thread)
+  >;
+};
+
 N_METADATA_STRUCT(neam::threading::resolved_graph)
 {
   using member_list = neam::ct::type_list
@@ -166,7 +186,8 @@ N_METADATA_STRUCT(neam::threading::resolved_graph)
     N_MEMBER_DEF(groups),
     N_MEMBER_DEF(chain_count),
     N_MEMBER_DEF(opcodes),
-    N_MEMBER_DEF(debug_names)
+    N_MEMBER_DEF(debug_names),
+    N_MEMBER_DEF(configuration)
   >;
 };
 

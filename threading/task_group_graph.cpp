@@ -29,7 +29,7 @@
 
 namespace neam::threading
 {
-  group_t task_group_dependency_tree::add_task_group(id_t id, std::string group_debug_name)
+  group_t task_group_dependency_tree::add_task_group(string_id id, group_configuration conf)
   {
     const group_t key = task_group_id;
     if (key == 0 || key == 0xFF)
@@ -52,7 +52,9 @@ namespace neam::threading
 
     ++task_group_id;
     group_names.emplace(id, key);
-    debug_names.emplace(key, std::move(group_debug_name));
+    if (id.get_string() != nullptr)
+      debug_names.emplace(key, id.get_string_view());
+    configuration.emplace(key, std::move(conf));
     roots.emplace(key);
     dependencies.emplace(key, links{});
     return key;
@@ -106,6 +108,7 @@ namespace neam::threading
     resolved_graph ret;
     ret.debug_names = debug_names;
     ret.groups = group_names;
+    ret.configuration = configuration;
     std::vector<std::vector<ir_opcode>> chains;
 
     std::set<group_t> launched_groups;
@@ -332,8 +335,14 @@ namespace neam::threading
   {
     cr::out().debug("----resolved graph debug----");
     cr::out().debug(" groups:");
-    for (const auto& it : groups)
-      cr::out().debug("  group {}: {} {}", it.second, debug_names.at(it.second), it.first);
+    for (const auto& it : debug_names)
+    {
+      const auto& conf = configuration.at(it.first);
+      if (conf.restrict_to_named_thread == id_t::none)
+        cr::out().debug("  group {}: {}", it.first, it.second);
+      else
+        cr::out().debug("  group {}: {} [restricted to {}]", it.first, it.second, conf.restrict_to_named_thread);
+    }
     cr::out().debug(" chain counts: {}", chain_count);
     cr::out().debug(" opcodes:");
     unsigned entry = 0;

@@ -29,6 +29,7 @@
 #include "types.hpp"
 #include "task.hpp"
 #include "task_group_graph.hpp"
+#include "named_threads.hpp"
 
 #include "../memory_pool.hpp"
 #include "../frame_allocation.hpp"
@@ -77,7 +78,7 @@ namespace neam::threading
       /// \brief Add the compiled frame operations
       /// \warning MUST BE CALLED BEFORE ANY OTHER OPERATION CAN BE DONE ON THE task_manager
       /// \warning NOT THREAD SAFE
-      void add_compiled_frame_operations(resolved_graph&& _frame_ops);
+      void add_compiled_frame_operations(resolved_graph&& _frame_ops, resolved_threads_configuration&& rtc);
 
 
       bool has_group(id_t id) const
@@ -94,6 +95,12 @@ namespace neam::threading
         return k_invalid_task_group;
       }
 
+      named_thread_t get_named_thread(id_t id) const
+      {
+        if (const auto it = named_threads_conf.named_threads.find(id); it != named_threads_conf.named_threads.end())
+          return it->second;
+        return k_invalid_named_thread;
+      }
 
       void set_start_task_group_callback(group_t group, function_t&& fnc);
       void set_start_task_group_callback(id_t id, function_t&& fnc)
@@ -120,7 +127,7 @@ namespace neam::threading
       task_wrapper get_task(id_t id, function_t&& func)
       {
         const group_t group = get_group_id(id);
-        check::debug::n_assert(group != 0xFF, "group name does not exists?");
+        check::debug::n_assert(group != k_invalid_task_group, "group name does not exists?");
         return get_task(group, std::move(func));
       }
 
@@ -131,7 +138,15 @@ namespace neam::threading
       /// This also means that only long-duration tasks can depend on other long-duration tasks.
       ///
       /// \warning Spawning any non-long duration tasks from within a long-duration task is undefined behavior and may lead to crashs
-      task_wrapper get_long_duration_task(function_t&& func);
+      task_wrapper get_long_duration_task(named_thread_t thread, function_t&& func);
+      task_wrapper get_long_duration_task(id_t thread, function_t&& func)
+      {
+        const named_thread_t th = get_named_thread(thread);
+        check::debug::n_assert(th != k_invalid_named_thread, "named thread does not exists?");
+        return get_long_duration_task(th, std::move(func));
+      }
+
+      task_wrapper get_long_duration_task(function_t&& func) { return get_long_duration_task(k_no_named_thread, std::move(func)); }
 
       /// \brief allocate and construct a long-duration task that is guaranteed to not execute before delay has expired
       /// \note the actual execution time can be arbitrary long after the delay has been reached
@@ -200,9 +215,16 @@ namespace neam::threading
       /// If no task is running, returns k_invalid_task_group
       group_t get_current_group() const { return thread_state().current_gid; }
 
+      /// \brief Return the group of the task that is running on the current thread.
+      /// If no task is running, returns k_invalid_task_group
+      named_thread_t get_current_thread() const { return thread_state().current_thread; }
+
       /// \brief Helper for get_task. Will run in the same task group as the current one.
       /// Must be called from within a task
       task_wrapper get_task(function_t&& func) { return get_task(get_current_group(), std::move(func)); }
+
+      void _set_current_thread(named_thread_t thread) { thread_state().current_thread = thread; }
+      void _set_current_thread(id_t thread) { thread_state().current_thread = get_named_thread(thread); }
 
     private:
       /// \brief Mark the setup of the task as complete and allow it to run (avoid race-conditions in the setup)
@@ -219,7 +241,8 @@ namespace neam::threading
 
       /// \brief Get a task to run
       /// \note The task is selected in a somewhat random fashion: the first task found is the selected one
-      task* get_task_to_run(bool exclude_long_duration = false);
+      task* get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration = false);
+      task* get_task_to_run(named_thread_t thread, bool exclude_long_duration = false);
 
       void reset_state();
 
@@ -239,6 +262,7 @@ namespace neam::threading
       cr::memory_pool<task> non_transient_tasks;
 
       resolved_graph frame_ops;
+      resolved_threads_configuration named_threads_conf;
 
       struct group_info_t
       {
@@ -247,6 +271,8 @@ namespace neam::threading
         std::atomic<bool> is_completed = false;
         std::atomic<bool> is_started = false;
         std::atomic<bool> will_start = false;
+
+        named_thread_t required_named_thread = k_no_named_thread;
 
         // held temporarily to avoid wasting cpu time spinning waiting for a group to start
         std::atomic<uint32_t> tasks_that_can_run = 0;
@@ -260,6 +286,15 @@ namespace neam::threading
         bool ended = false;
         uint16_t index = 0;
         spinlock lock;
+      };
+
+      struct named_thread_frame_state_t
+      {
+        named_thread_configuration configuration;
+        std::vector<group_t> groups;
+
+        cr::queue_ts<cr::queue_ts_atomic_wrapper<task*>> long_duration_tasks_to_run;
+        std::atomic<uint32_t> tasks_that_can_run = 0;
       };
 
       struct delayed_task_t
@@ -285,10 +320,10 @@ namespace neam::threading
       {
         std::deque<group_info_t> groups;
         std::deque<chain_info_t> chains;
+        std::deque<named_thread_frame_state_t> threads;
 
         sorted_task_list_t delayed_tasks;
 
-        alignas(64) std::atomic<uint32_t> tasks_that_can_run = 0;
         std::atomic<uint32_t> running_tasks = 0;
         std::atomic<uint32_t> ended_chains = 0;
 
@@ -311,6 +346,7 @@ namespace neam::threading
 
       struct thread_state_t
       {
+        named_thread_t current_thread = k_no_named_thread;
         group_t current_gid = k_invalid_task_group;
       };
 

@@ -34,6 +34,7 @@ namespace neam::threading
   task_manager::task_manager()
   {
     frame_state.groups.resize(1);
+    frame_state.threads.resize(1);
 
     transient_tasks.pool_debug_name = "task_manager::transient_tasks pool";
     non_transient_tasks.pool_debug_name = "task_manager::non_transient_tasks pool";
@@ -101,11 +102,11 @@ namespace neam::threading
     check::debug::n_assert(frame_state.groups[task_group].is_completed == false, "Trying to create a task from a completed group");
 
     task* ptr = (task*)transient_tasks.allocate(sizeof(task));
-    new (ptr) task(*this, task_group, frame_state.frame_key, std::move(func));
+    new (ptr) task(*this, task_group, frame_state.groups[task_group].required_named_thread, frame_state.frame_key, std::move(func));
     return *ptr;
   }
 
-  task_wrapper task_manager::get_long_duration_task(function_t&& func)
+  task_wrapper task_manager::get_long_duration_task(named_thread_t thread, function_t&& func)
   {
     check::debug::n_check(!frame_state.ensure_on_task_insertion, "long-duration task created while the ensure flag is on");
     frame_state.groups[k_non_transient_task_group].remaining_tasks.fetch_add(1, std::memory_order_release);
@@ -113,7 +114,7 @@ namespace neam::threading
     task* ptr = non_transient_tasks.allocate();
     check::debug::n_assert(ptr != nullptr, "Failed to allocate a task");
 
-    new (ptr) task(*this, k_non_transient_task_group, frame_state.frame_key, std::move(func));
+    new (ptr) task(*this, k_non_transient_task_group, thread, frame_state.frame_key, std::move(func));
     return *ptr;
   }
 
@@ -159,11 +160,14 @@ namespace neam::threading
     check::debug::n_assert(t.unlock_is_completed() == false, "Trying to push an already completed task");
     check::debug::n_assert(t.unlock_is_waiting_to_run() == false, "Trying to push an already waiting task");
     check::debug::n_assert(t.key < (uint32_t)frame_state.groups.size(), "Invalid task group type (group: {})", t.key);
+    check::debug::n_assert(t.thread_key < (uint32_t)frame_state.threads.size(), "Invalid named thread (thread: {})", t.thread_key);
     if (t.key != k_non_transient_task_group)
     {
       check::debug::n_assert(t.get_frame_key() == frame_state.frame_key, "Trying to push a task to run when that task has outlived its lifespan");
       check::debug::n_assert(frame_state.groups[t.key].is_completed == false, "Trying to push a task to a completed group");
       check::debug::n_assert(!has_delay, "Trying to push a non-long duration task with an execution delay");
+      check::debug::n_assert(t.thread_key == frame_state.groups[t.key].required_named_thread, "Incorrect named thread for task. Should be {}, but instead is {}",
+                             frame_state.groups[t.key].required_named_thread, t.thread_key);
     }
     // skip tasks that cannot run, as they will be added automatically
     // this check is necessary as this function can be called by a user
@@ -193,7 +197,7 @@ namespace neam::threading
         || frame_state.groups[t.key].will_start.load(std::memory_order_seq_cst)
         || frame_state.groups[t.key].is_started.load(std::memory_order_seq_cst))
     {
-      [[maybe_unused]] const uint32_t count = frame_state.tasks_that_can_run.fetch_add(1, std::memory_order_release);
+      [[maybe_unused]] const uint32_t count = frame_state.threads[t.thread_key].tasks_that_can_run.fetch_add(1, std::memory_order_release);
       TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)(count + 1));
     }
     else
@@ -205,9 +209,10 @@ namespace neam::threading
     frame_state.groups[t.key].tasks_to_run.push_back(&t);
   }
 
-  void task_manager::add_compiled_frame_operations(resolved_graph&& _frame_ops)
+  void task_manager::add_compiled_frame_operations(resolved_graph&& _frame_ops, resolved_threads_configuration&& rtc)
   {
     frame_ops = std::move(_frame_ops);
+    named_threads_conf = std::move(rtc);
 
     // chains:
     frame_state.chains.resize(frame_ops.chain_count);
@@ -217,13 +222,46 @@ namespace neam::threading
       frame_state.chains[i].index = frame_ops.opcodes[i].arg;
     }
 
-    // groups: (TODO: add a group count)
-    uint32_t max_group = 1;
+    // groups: (TODO: add a thread/group count)
+    uint32_t max_group = 0;
     for (const auto& it : frame_ops.groups)
     {
       max_group = std::max<uint32_t>(max_group, it.second);
     }
+    uint32_t max_thread = 0;
+    for (const auto& it : named_threads_conf.named_threads)
+    {
+      max_thread = std::max<uint32_t>(max_thread, it.second);
+    }
+
     frame_state.groups.resize(max_group + 1);
+    frame_state.threads.resize(max_thread + 1);
+
+    for (const auto& it : frame_ops.groups)
+    {
+      const auto& conf = frame_ops.configuration.at(it.second);
+      if (conf.restrict_to_named_thread != id_t::none)
+      {
+        if (auto thit = named_threads_conf.named_threads.find(conf.restrict_to_named_thread); thit != named_threads_conf.named_threads.end())
+        {
+          frame_state.groups[it.second].required_named_thread = thit->second;
+          frame_state.threads[thit->second].groups.push_back(it.second);
+        }
+        else
+        {
+          check::debug::n_assert(false, "Invalid named thread requirement: unknown named thread {} in group {}", conf.restrict_to_named_thread, it.second);
+        }
+      }
+      else
+      {
+        frame_state.threads[0].groups.push_back(it.second);
+      }
+    }
+
+    for (const auto& it : named_threads_conf.named_threads)
+    {
+      frame_state.threads[it.second].configuration = named_threads_conf.configuration[it.second];
+    }
 
     frame_state.groups[k_non_transient_task_group].is_started = true;
   }
@@ -387,7 +425,7 @@ namespace neam::threading
                 uint32_t tasks_to_run = group_info.tasks_that_can_run.load(std::memory_order_seq_cst);
                 while (!group_info.tasks_that_can_run.compare_exchange_strong(tasks_to_run, 0, std::memory_order_seq_cst));
 
-                frame_state.tasks_that_can_run.fetch_add(tasks_to_run, std::memory_order_release);
+                frame_state.threads[group_info.required_named_thread].tasks_that_can_run.fetch_add(tasks_to_run, std::memory_order_release);
 
                 const bool was_started = group_info.is_started.exchange(true, std::memory_order_seq_cst);
                 check::debug::n_assert(!was_started, "Invalid frame operation: execute_task_group: task group was already started");
@@ -417,10 +455,26 @@ namespace neam::threading
     return complexity > k_complexity_threshold;
   }
 
-  task* task_manager::get_task_to_run(bool exclude_long_duration)
+  task* task_manager::get_task_to_run(named_thread_t thread, bool exclude_long_duration)
+  {
+    check::debug::n_assert(thread < frame_state.threads.size(), "get_task_to_run: invalid named thread: {}", (uint32_t)thread);
+
+    const auto& conf = frame_state.threads[thread].configuration;
+    const bool is_general_thread = (thread == k_no_named_thread);
+    const bool can_run_general_tasks = !is_general_thread && (conf.can_run_general_tasks);
+
+    task* ptr = get_task_to_run_internal(thread, exclude_long_duration);
+    if (ptr)
+      return ptr;
+    if (!can_run_general_tasks)
+      return nullptr;
+    return get_task_to_run_internal(k_no_named_thread, !conf.can_run_general_long_duration_tasks || exclude_long_duration);
+  }
+
+  task* task_manager::get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration)
   {
     thread_local group_t start_group = 1;
-    if (frame_state.groups.empty() || frame_state.tasks_that_can_run.load(std::memory_order_acquire) == 0)
+    if (frame_state.groups.empty() || frame_state.threads[thread].tasks_that_can_run.load(std::memory_order_acquire) == 0)
       return nullptr;
 
     TRACY_SCOPED_ZONE;
@@ -439,6 +493,8 @@ namespace neam::threading
       group_info_t& group_info = frame_state.groups[group_it];
 
       if (exclude_long_duration && group_it == k_non_transient_task_group)
+        continue;
+      if (group_info.required_named_thread != thread)
         continue;
 
       // skip groups that are completed / have not started
@@ -466,7 +522,7 @@ namespace neam::threading
         check::debug::n_assert(!ptr->is_completed(), "Invalid state: trying to execute a task that is already completed");
         check::debug::n_assert(ptr->is_waiting_to_run(), "Invalid state: trying to execute a task that is not expecting to run");
 
-        const uint32_t count = frame_state.tasks_that_can_run.fetch_sub(1, std::memory_order_release);
+        const uint32_t count = frame_state.threads[thread].tasks_that_can_run.fetch_sub(1, std::memory_order_release);
         // not a fatal error per say, but may lead to very incorect behavior
         // also, when that test is not present, there's a huge perf penalty
         check::debug::n_assert(count != 0, "Invalid state: tasks_that_can_run: underflow detected");
@@ -497,7 +553,7 @@ namespace neam::threading
       return;
 
     // grab a random task and run it
-    task* ptr = get_task_to_run(exclude_long_duration);
+    task* ptr = get_task_to_run(get_current_thread(), exclude_long_duration);
     if (ptr)
     {
       return do_run_task(*ptr);
@@ -506,7 +562,19 @@ namespace neam::threading
 
   void task_manager::wait_for_a_task()
   {
-    if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
+    const auto& conf = frame_state.threads[get_current_thread()].configuration;
+    const bool can_run_general_tasks = get_current_thread() != k_no_named_thread && (conf.can_run_general_tasks);
+
+    const auto check_for_tasks = [=, this](std::memory_order mo)
+    {
+      if (frame_state.threads[get_current_thread()].tasks_that_can_run.load(mo) > 0)
+        return true;
+      if (can_run_general_tasks && frame_state.threads[k_no_named_thread].tasks_that_can_run.load(mo) > 0)
+        return true;
+      return false;
+    };
+
+    if (check_for_tasks(std::memory_order_acquire))
       return;
 
     TRACY_SCOPED_ZONE_COLOR(0xFF0000);
@@ -514,8 +582,9 @@ namespace neam::threading
 
     advance();
 
-    constexpr uint32_t k_max_spin_count = 1000;
-    constexpr uint32_t k_max_loop_count_before_sleep = 100;
+    constexpr uint32_t k_max_spin_count = 5000;
+    constexpr uint32_t k_max_loop_count_before_sleep = 2;
+    constexpr uint32_t k_max_sleep_us = 5000;
     uint32_t loop_count = 0;
 
     // avoid looping forever, force to exit the function on frame-end
@@ -533,15 +602,15 @@ namespace neam::threading
       }
 
       uint32_t spin_count = 0;
-      for (; frame_state.tasks_that_can_run.load(std::memory_order_relaxed) == 0 && spin_count < k_max_spin_count; ++spin_count);
-      if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
+      for (; !check_for_tasks(std::memory_order_relaxed) && spin_count < k_max_spin_count; ++spin_count);
+      if (check_for_tasks(std::memory_order_acquire))
         return;
 
       if (loop_count > k_max_loop_count_before_sleep)
       {
         //TRACY_SCOPED_ZONE;
         // avoid spining and consuming all the cpu:
-        std::this_thread::sleep_for(std::chrono::microseconds(100 * (loop_count - k_max_loop_count_before_sleep)));
+        std::this_thread::sleep_for(std::chrono::microseconds(std::min(k_max_sleep_us, 10 * (loop_count - k_max_loop_count_before_sleep))));
       }
       else
       {
@@ -582,7 +651,7 @@ namespace neam::threading
     while (unlucky_strikes < k_max_unlucky_strikes)
     {
       // grab a random task and run it
-      task* ptr = get_task_to_run();
+      task* ptr = get_task_to_run(get_current_thread());
       if (ptr)
       {
         do_run_task(*ptr);
@@ -622,8 +691,11 @@ namespace neam::threading
 
   bool task_manager::has_pending_tasks() const
   {
-    if (frame_state.tasks_that_can_run.load(std::memory_order_acquire) > 0)
-      return true;
+    for (const auto& it : frame_state.threads)
+    {
+      if (it.tasks_that_can_run.load(std::memory_order_acquire) > 0)
+        return true;
+    }
     return false;
   }
 
@@ -636,7 +708,12 @@ namespace neam::threading
 
   uint32_t task_manager::get_pending_tasks_count() const
   {
-    return frame_state.tasks_that_can_run.load(std::memory_order_acquire);
+    uint32_t count = 0;
+    for (const auto& it : frame_state.threads)
+    {
+      count += (it.tasks_that_can_run.load(std::memory_order_acquire));
+    }
+    return count;
   }
 
   void task_manager::poll_delayed_tasks(bool force_push)
