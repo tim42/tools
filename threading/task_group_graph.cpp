@@ -289,12 +289,13 @@ namespace neam::threading
       links& n = it.second;
 
       // for each dependency
-      for (auto depit = n.from.begin(); depit != n.from.end(); ++depit)
+      for (auto depit = n.from.begin(); depit != n.from.end();)
       {
         bool to_remove = false;
         // search if any other dependency indirectly depend on it
         for (auto to_test : n.from)
         {
+          // skip self:
           if (to_test == *depit) continue;
 
           stack.clear();
@@ -317,6 +318,10 @@ namespace neam::threading
         {
           dependencies[*depit].to.erase(tg);
           depit = n.from.erase(depit);
+        }
+        else
+        {
+          ++depit;
         }
       }
     }
