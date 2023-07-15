@@ -206,7 +206,14 @@ namespace neam::threading
       frame_state.groups[t.key].tasks_that_can_run.fetch_add(1, std::memory_order_seq_cst);
     }
 
-    frame_state.groups[t.key].tasks_to_run.push_back(&t);
+    if (t.key == k_non_transient_task_group && t.thread_key != k_no_named_thread)
+    {
+      frame_state.threads[t.thread_key].long_duration_tasks_to_run.push_back(&t);
+    }
+    else
+    {
+      frame_state.groups[t.key].tasks_to_run.push_back(&t);
+    }
   }
 
   void task_manager::add_compiled_frame_operations(resolved_graph&& _frame_ops, resolved_threads_configuration&& rtc)
@@ -455,7 +462,7 @@ namespace neam::threading
     return complexity > k_complexity_threshold;
   }
 
-  task* task_manager::get_task_to_run(named_thread_t thread, bool exclude_long_duration)
+  task* task_manager::get_task_to_run(named_thread_t thread, bool exclude_long_duration, task_selection_mode mode)
   {
     check::debug::n_assert(thread < frame_state.threads.size(), "get_task_to_run: invalid named thread: {}", (uint32_t)thread);
 
@@ -466,9 +473,9 @@ namespace neam::threading
     task* ptr = get_task_to_run_internal(thread, exclude_long_duration);
     if (ptr)
       return ptr;
-    if (!can_run_general_tasks)
+    if ((!can_run_general_tasks || mode == task_selection_mode::only_own_tasks) && mode != task_selection_mode::anything)
       return nullptr;
-    return get_task_to_run_internal(k_no_named_thread, !conf.can_run_general_long_duration_tasks || exclude_long_duration);
+    return get_task_to_run_internal(k_no_named_thread, (!conf.can_run_general_long_duration_tasks && mode != task_selection_mode::anything) || exclude_long_duration);
   }
 
   task* task_manager::get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration)
@@ -486,15 +493,16 @@ namespace neam::threading
     {
       // weak shuffle, but hey, it works
       // + prioritize any other task group over the non-transient one
-      const group_t group_it = i == frame_state.groups.size() - 1
-                               ? k_non_transient_task_group
-                               : (1 + ((start_index + i) % (frame_state.groups.size() - 1)));
+      // const group_t group_it = i == frame_state.groups.size() - 1
+      //                          ? k_non_transient_task_group
+      //                          : (1 + ((start_index + i) % (frame_state.groups.size() - 1)));
+      const group_t group_it = (start_index + i) % frame_state.groups.size();
 
       group_info_t& group_info = frame_state.groups[group_it];
 
       if (exclude_long_duration && group_it == k_non_transient_task_group)
         continue;
-      if (group_info.required_named_thread != thread)
+      if (group_info.required_named_thread != thread && group_it != k_non_transient_task_group)
         continue;
 
       // skip groups that are completed / have not started
@@ -509,9 +517,18 @@ namespace neam::threading
 
       {
         task* ptr = nullptr;
-        const bool has_task = group_info.tasks_to_run.try_pop_front(ptr);
-        if (!has_task)
-          continue;
+        if (group_it == k_non_transient_task_group && thread != k_no_named_thread)
+        {
+          const bool has_task = frame_state.threads[thread].long_duration_tasks_to_run.try_pop_front(ptr);
+          if (!has_task)
+            continue;
+        }
+        else
+        {
+          const bool has_task = group_info.tasks_to_run.try_pop_front(ptr);
+          if (!has_task)
+            continue;
+        }
         check::debug::n_assert(ptr != nullptr, "Corrupted task data");
 
         if (group_it != k_non_transient_task_group)
@@ -525,7 +542,7 @@ namespace neam::threading
         const uint32_t count = frame_state.threads[thread].tasks_that_can_run.fetch_sub(1, std::memory_order_release);
         // not a fatal error per say, but may lead to very incorect behavior
         // also, when that test is not present, there's a huge perf penalty
-        check::debug::n_assert(count != 0, "Invalid state: tasks_that_can_run: underflow detected");
+        check::debug::n_assert(count != 0, "Invalid state: tasks_that_can_run (named thread: {}, group: {}): underflow detected", thread, group_it);
         TRACY_PLOT_CSTR("task_manager::waiting_tasks", (int64_t)(count - 1));
         return ptr;
       }
@@ -546,14 +563,14 @@ namespace neam::threading
   }
 
 
-  void task_manager::run_a_task(bool exclude_long_duration)
+  void task_manager::run_a_task(bool exclude_long_duration, task_selection_mode mode)
   {
     // try to advance the state
     if (advance())
       return;
 
     // grab a random task and run it
-    task* ptr = get_task_to_run(get_current_thread(), exclude_long_duration);
+    task* ptr = get_task_to_run(get_current_thread(), exclude_long_duration, mode);
     if (ptr)
     {
       return do_run_task(*ptr);

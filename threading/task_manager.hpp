@@ -43,6 +43,13 @@
 
 namespace neam::threading
 {
+  enum class task_selection_mode
+  {
+    normal, // as specified in the conf
+    only_own_tasks, // if in a named thread, will prevent running any other tasks
+    anything, // will allow running any tasks
+  };
+
   /// \brief Handle tasks allocation
   class task_manager
   {
@@ -166,7 +173,7 @@ namespace neam::threading
       ///       (possibly calling wait_for_a_task to avoid spining)
       ///
       /// \note most compilers will directly jump to the task (and not perform a call), so this function may not appear in callstacks
-      void run_a_task(bool exclude_long_duration = false);
+      void run_a_task(bool exclude_long_duration = false, task_selection_mode mode = task_selection_mode::normal);
 
       /// \brief Wait for a task that can be run.
       /// May decide to sleep the thread for a while if necessary to avoid hogging the CPU
@@ -242,7 +249,7 @@ namespace neam::threading
       /// \brief Get a task to run
       /// \note The task is selected in a somewhat random fashion: the first task found is the selected one
       task* get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration = false);
-      task* get_task_to_run(named_thread_t thread, bool exclude_long_duration = false);
+      task* get_task_to_run(named_thread_t thread, bool exclude_long_duration = false, task_selection_mode mode = task_selection_mode::normal);
 
       void reset_state();
 
