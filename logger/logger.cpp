@@ -54,6 +54,8 @@ namespace neam::cr
 
   void print_log_to_console(void*, neam::cr::logger::severity s, const std::string& msg, std::source_location loc)
   {
+    static const fmt::text_style critical = fmt::emphasis::bold | fmt::fg(fmt::color::crimson) | fmt::bg(fmt::color::gainsboro);
+    static const uint32_t critical_color = 0xFF0000;
     static const fmt::text_style error = fmt::emphasis::bold | fmt::fg(fmt::color::red);
     static const uint32_t error_color = 0xFF5500;
     static const fmt::text_style warn = fmt::emphasis::bold | fmt::fg(fmt::color::orange);
@@ -63,14 +65,14 @@ namespace neam::cr
     static const fmt::text_style debug = fmt::fg(fmt::color::gray);
     static const uint32_t debug_color = 0x555555;
     fmt::text_style style;
-    uint32_t color;
+    [[maybe_unused]] uint32_t color = normal_color;
     switch (s)
     {
       case neam::cr::logger::severity::debug: style = debug; color = debug_color; break;
       case neam::cr::logger::severity::message: style = normal; color = normal_color; break;
       case neam::cr::logger::severity::warning: style = warn; color = warn_color; break;
       case neam::cr::logger::severity::error: style = error; color = error_color;break;
-      case neam::cr::logger::severity::critical: style = error; color = 0xFF0000; break;
+      case neam::cr::logger::severity::critical: style = critical; color = critical_color; break;
     }
 
     std::string msg_str = format_log_to_string(s, msg, loc);
