@@ -90,6 +90,7 @@ namespace neam::cr
       scoped_counter(Type& _ref)
        : ref(_ref)
       {
+        value = ref;
         ref += 1;
       }
       scoped_counter(Type& _ref, scoped_counter_adopt_t)
@@ -101,8 +102,11 @@ namespace neam::cr
         ref -= 1;
       }
 
+      Type get_value() const { return value; }
+
     private:
       Type& ref;
+      Type value;
   };
 
   /// \brief Atomic variant of scoped_counte, so the add/sub operation is atomic
@@ -110,26 +114,60 @@ namespace neam::cr
   class scoped_counter<std::atomic<Type>>
   {
     public:
-      scoped_counter(std::atomic<Type>& _ref)
-       : ref(_ref)
+      scoped_counter(std::atomic<Type>& _ref, Type _step = 1)
+       : ref(_ref), step(_step)
       {
-        ref.fetch_add(1, std::memory_order_release);
+        value = ref.fetch_add(step, std::memory_order_acq_rel);
       }
-      scoped_counter(std::atomic<Type>& _ref, scoped_flag_adopt_t)
+      scoped_counter(std::atomic<Type>& _ref, scoped_counter_adopt_t)
        : ref(_ref)
       {
       }
 
       ~scoped_counter()
       {
-        ref.fetch_sub(1, std::memory_order_release);
+        ref.fetch_sub(step, std::memory_order_release);
+      }
+
+      Type get_value() const { return value; }
+    private:
+      std::atomic<Type>& ref;
+      Type step;
+      Type value;
+  };
+
+  class scoped_ordered_list
+  {
+    public:
+      scoped_ordered_list(std::atomic<uint64_t>& _state, uint8_t _index)
+       : state(_state), index(_index)
+      {
+        if (index < 64)
+          state.fetch_or(uint64_t(1) << index, std::memory_order_release);
+      }
+
+      ~scoped_ordered_list()
+      {
+        if (index < 64)
+          state.fetch_xor(uint64_t(1) << index, std::memory_order_release);
+      }
+
+      uint32_t count_entries_before() const
+      {
+        if (index == 0 || index >= 64) return 0;
+
+        const uint64_t current_state = state.load(std::memory_order_acquire);
+        return __builtin_popcountl(current_state & ((uint64_t(1) << index) - 1));
       }
 
     private:
-      std::atomic<Type>& ref;
+      std::atomic<uint64_t>& state;
+      uint8_t index;
   };
 
   // deduction guides for various types:
-  template<typename Type> scoped_flag(std::atomic<Type>&, Type, Type) -> scoped_flag<std::atomic<Type>, Type>;
+  template<typename Type> scoped_flag(std::atomic<Type>&, Type, scoped_flag_adopt_t) -> scoped_flag<std::atomic<Type>, Type>;
+  template<typename Type, typename StepType> scoped_counter(std::atomic<Type>&, StepType) -> scoped_counter<std::atomic<Type>>;
+  template<typename Type> scoped_counter(std::atomic<Type>&, scoped_counter_adopt_t) -> scoped_counter<std::atomic<Type>>;
 }
 
