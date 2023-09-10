@@ -134,6 +134,8 @@ namespace neam
         return !(*this == o);
       }
 
+      constexpr std::string_view view() const { return {str, size}; }
+
       const char* str;
       size_t size;
     };
