@@ -48,14 +48,14 @@ namespace neam
 
     /// \brief duplicate the raw data / its allocation.
     /// Explicit (no operator = ) so as to avoid mistakenly duplicating this stuff
-    raw_data duplicate() const { return duplicate(*this); }
+    [[nodiscard]] raw_data duplicate() const { return duplicate(*this); }
 
     /// \brief Allocates and setup a raw_data
-    static raw_data allocate(size_t size) { return { unique_ptr(operator new(size)), size }; }
+    [[nodiscard]] static raw_data allocate(size_t size) { return { unique_ptr(operator new(size)), size }; }
 
     /// \brief Copy a contiguous container (must have a .size() and a .data()) to a new raw_data
     template<typename ContinuousContainer>
-    static raw_data allocate_from(const ContinuousContainer& c)
+    [[nodiscard]] static raw_data allocate_from(const ContinuousContainer& c)
     {
       raw_data ret = allocate(c.size() * sizeof(typename ContinuousContainer::value_type));
       memcpy(ret.data.get(), c.data(), ret.size);
@@ -64,7 +64,7 @@ namespace neam
 
     /// \brief duplicate the raw data / its allocation.
     /// Explicit (no operator = ) so as to avoid mistakenly duplicating this stuff
-    static raw_data duplicate(const raw_data& other)
+    [[nodiscard]] static raw_data duplicate(const raw_data& other)
     {
       if (!other.data || !other.size)
         return {};
@@ -74,7 +74,7 @@ namespace neam
     }
 
     /// \brief duplicate some pointer + size data.
-    static raw_data duplicate(const void* data, size_t size)
+    [[nodiscard]] static raw_data duplicate(const void* data, size_t size)
     {
       if (data == nullptr || !size)
         return {};
@@ -83,7 +83,7 @@ namespace neam
       return ret;
     }
 
-    static bool is_same(const raw_data& a, const raw_data& b)
+    [[nodiscard]] static bool is_same(const raw_data& a, const raw_data& b)
     {
       if (&a == &b) return true;
       if (a.size != b.size) return false;
