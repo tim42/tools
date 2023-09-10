@@ -31,10 +31,13 @@
 
 // waiting for std::move_only_function to be availlable, here is a ~drop-in replacement
 #include "../async/internal_do_not_use_cpp23_replacement/function2.hpp"
+#include "../raw_ptr.hpp"
 
 
 namespace neam::threading
 {
+  class task_manager;
+
 //           std::move_only_function
   using function_t = fu2::unique_function<void()>;
 
@@ -45,5 +48,36 @@ namespace neam::threading
   using named_thread_t = uint8_t;
   static constexpr named_thread_t k_no_named_thread = 0;
   static constexpr named_thread_t k_invalid_named_thread = ~named_thread_t(0);
+
+  using task_completion_marker_t = bool;
+
+  class task_completion_marker_ptr_t
+  {
+    public:
+      task_completion_marker_ptr_t() = delete;
+      task_completion_marker_ptr_t(task_completion_marker_ptr_t&&) = default;
+      task_completion_marker_ptr_t& operator = (task_completion_marker_ptr_t&&) = default;
+      ~task_completion_marker_ptr_t();
+
+
+      bool is_completed() const
+      {
+        check::debug::n_check(_is_valid(), "task_completion_marker_ptr_t: trying to get task completion using an invalid marker.");
+        return *ptr;
+      }
+      operator bool () const { return is_completed(); }
+
+      bool _is_valid() const { return ptr != nullptr; }
+      task_completion_marker_t* _get_raw_pointer() { return ptr; }
+
+    private:
+      task_completion_marker_ptr_t(task_completion_marker_t* _ptr, task_manager* _tm) : ptr(_ptr), tm(_tm) {}
+
+    private:
+      cr::raw_ptr<task_completion_marker_t> ptr;
+      task_manager* tm;
+
+      friend task_manager;
+  };
 }
 

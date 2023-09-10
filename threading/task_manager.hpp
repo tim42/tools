@@ -59,7 +59,7 @@ namespace neam::threading
       /// \brief The frame lock will prevent the task graph from advancing keeping it locked in its current state.
       /// The only task group that can run is the non_transient_tasks
       /// Usefull during the app boot process to prevent task group to run while core resources are not yet loaded
-      spinlock& get_frame_lock()
+      [[nodiscard]] spinlock& get_frame_lock()
       {
         return frame_state.frame_lock;
       }
@@ -190,7 +190,21 @@ namespace neam::threading
       ///
       /// \note If called from inside a task, it is incorrect to wait for a task from a different task-group
       ///       as it may lead to a deadlock.
-      void actively_wait_for(task& t);
+      void actively_wait_for(group_t group, task_completion_marker_ptr_t&& t);
+
+      void actively_wait_for(task_completion_marker_ptr_t&& t)
+      {
+        return actively_wait_for(get_current_group(), std::move(t));
+      }
+
+      /// \brief Actively wait for a task to be completed (run tasks untill the task is completed)
+      ///        Does not call to wait_for_a_task
+      ///
+      /// Can be safely called inside a task.
+      ///
+      /// \note If called from inside a task, it is incorrect to wait for a task from a different task-group
+      ///       as it may lead to a deadlock.
+      void actively_wait_for(task_wrapper&& tw);
 
       /// \brief run tasks for the specified duration. (wait_for_a_task is not called)
       ///
@@ -232,6 +246,14 @@ namespace neam::threading
 
       void _set_current_thread(named_thread_t thread) { thread_state().current_thread = thread; }
       void _set_current_thread(id_t thread) { thread_state().current_thread = get_named_thread(thread); }
+      void _set_current_thread_index(uint8_t index) { thread_state().thread_index = index; }
+
+      /// \brief Allocates a completion marker, usually used for getting completion status of tasks
+      [[nodiscard]] task_completion_marker_ptr_t _allocate_completion_marker();
+      void _deallocate_completion_marker_ptr(task_completion_marker_ptr_t&& ptr);
+
+    public: // advanced internals
+      void _advance_state() { advance(); }
 
     private:
       /// \brief Mark the setup of the task as complete and allow it to run (avoid race-conditions in the setup)
@@ -248,8 +270,8 @@ namespace neam::threading
 
       /// \brief Get a task to run
       /// \note The task is selected in a somewhat random fashion: the first task found is the selected one
-      task* get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration = false);
-      task* get_task_to_run(named_thread_t thread, bool exclude_long_duration = false, task_selection_mode mode = task_selection_mode::normal);
+      [[nodiscard]] task* get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration = false);
+      [[nodiscard]] task* get_task_to_run(named_thread_t thread, bool exclude_long_duration = false, task_selection_mode mode = task_selection_mode::normal);
 
       void reset_state();
 
@@ -267,6 +289,8 @@ namespace neam::threading
       // and needs to be manually deallocated upon completion
       // Completion within a frame is not guaranteed, tasks are lower priority than normal tasks
       cr::memory_pool<task> non_transient_tasks;
+
+      cr::memory_pool<task_completion_marker_t, cr::raw_memory_pool_ts, 1> completion_marker_pool;
 
       resolved_graph frame_ops;
       resolved_threads_configuration named_threads_conf;
@@ -332,12 +356,13 @@ namespace neam::threading
         sorted_task_list_t delayed_tasks;
 
         std::atomic<uint32_t> running_tasks = 0;
+        std::atomic<uint32_t> running_transient_tasks = 0;
         std::atomic<uint32_t> ended_chains = 0;
 
         // so we can avoid spinning the advance function and instead wait
         std::atomic<uint32_t> global_state_key = 0;
 
-        uint32_t frame_key = 0;
+        std::atomic<uint32_t> frame_key = 0;
 
         // used to stop the frame from progressing
         // (usefull during the boot process)
@@ -355,6 +380,7 @@ namespace neam::threading
       {
         named_thread_t current_thread = k_no_named_thread;
         group_t current_gid = k_invalid_task_group;
+        uint8_t thread_index = 0xFF;
       };
 
       static thread_state_t& thread_state()

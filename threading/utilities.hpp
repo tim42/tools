@@ -45,19 +45,25 @@ namespace neam::threading
     const size_t size = array.size();
 
     // Used to synchronise all the tasks to a single point:
-    neam::threading::task_wrapper final_task = tm.get_task(group, []() {});
+    neam::threading::task_wrapper final_task = tm.get_task(group, []{});
+    task_completion_marker_ptr_t done = final_task.create_completion_marker();
 
     std::atomic<size_t> index = 0;
 
     // inner for-each function
-    std::function<void()> inner_for_each;
-    inner_for_each = [&tm, &array, &index, &func, &inner_for_each, &final_task = *final_task, size, entry_per_task, group]()
+    const auto loop_content = [&array, &index, &func, size, entry_per_task]()
     {
       const size_t base_index = index.fetch_add(entry_per_task, std::memory_order_acq_rel);
       for (size_t i = 0; i < entry_per_task && base_index + i < size; ++i)
       {
         func(array[base_index + i], base_index + i);
       }
+    };
+
+    std::function<void()> inner_for_each;
+    inner_for_each = [&tm, &loop_content, &index, &inner_for_each, &final_task = *final_task, size, group]()
+    {
+      loop_content();
 
       // Add a new task if necessary:
       if (index.load(std::memory_order_acquire) < size)
@@ -81,12 +87,19 @@ namespace neam::threading
     }
 
     // make the wrapper release the ref so it can run:
-    threading::task& final_task_ref = *final_task;
     final_task = {};
+
+    // directly participate to the for-each:
+    while (index.load(std::memory_order_acquire) < size)
+    {
+      loop_content();
+    }
 
     // Prevent leaving the function before final_task is done,
     // thus keeping alive all the variables that are in the lambda capture
-    tm.actively_wait_for(final_task_ref);
+
+    // Simply wait for the final task (everything has been/is being processed, and we simply have to wait for the dipatched tasks to complete)
+    tm.actively_wait_for(std::move(done));
   }
 }
 
