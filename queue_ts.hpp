@@ -233,7 +233,7 @@ namespace neam::cr
           if (index >= entry_count_per_page)
           {
             page->header.read_index.fetch_sub(1, std::memory_order_release);
-            page_t* old_page = page;
+            [[maybe_unused]] page_t* old_page = page;
             page_t* next_page = page->header.next();
             if (next_page != nullptr)
               page = next_page;
