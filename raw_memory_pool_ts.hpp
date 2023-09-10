@@ -64,7 +64,7 @@ namespace neam
         ~raw_memory_pool_ts()
         {
           free_page(write_page);
-          check::debug::n_assert(is_cleared(), "Destructing a non-cleared pool (remaining: {} objects)", get_number_of_object());
+          check::debug::n_assert(is_cleared(), "Destructing a non-cleared pool (remaining: {} objects | object size: {})", get_number_of_object(), object_size);
         }
 
         // no copy.
@@ -140,11 +140,6 @@ namespace neam
             page_header_t* next_page = (page_header_t*)allocate_page();
             page->next.store(next_page, std::memory_order_release);
           }
-          if (index == object_count_per_page - 1)
-          {
-            // mark the page as being deletable
-            page->write_offset.fetch_or(0x8000, std::memory_order_release);
-          }
 
           const uint32_t offset = index * object_size + object_offset;
 
@@ -162,7 +157,7 @@ namespace neam
           {
             page_header_t* const chk = get_page_for_ptr(p);
 
-            const uint32_t total_count = object_count.fetch_sub(1, std::memory_order_release);
+            [[maybe_unused]] const uint32_t total_count = object_count.fetch_sub(1, std::memory_order_release);
             check::debug::n_assert(total_count > 0, "Double free/corruption (global|pool object)");
 
             const uint32_t count = chk->allocation_count.fetch_sub(1, std::memory_order_release);
@@ -195,6 +190,7 @@ namespace neam
         page_header_t* allocate_page() const
         {
           page_header_t* page = (page_header_t*)memory::allocate_page(page_count);
+          check::debug::n_check(page != nullptr, "Could not allocate {} memory pages", page_count);
           if (!page) return nullptr;
 
           // setup the chunk
