@@ -31,6 +31,7 @@
 #include "debug/assert.hpp"
 #include "spinlock.hpp"
 #include "type_id.hpp"
+#include "threading/task_manager.hpp"
 
 namespace neam::cr
 {
@@ -80,6 +81,19 @@ namespace neam::cr
       uint64_t key = 0;
 
       template<typename... Args> friend class event;
+      template<typename InnerType> friend class raw_event;
+  };
+
+  /// \brief Utility to handle list of multiple tokens that should have the same life-cycle
+  /// \note NOT threadsafe
+  class event_token_list_t
+  {
+    public:
+      void release() { tokens.clear(); }
+      event_token_list_t& operator += (event_token_t&& tk) { tokens.push_back(std::move(tk)); return *this; }
+
+    private:
+      std::vector<event_token_t> tokens;
   };
 
   /// \brief Simple (thread-safe) multicast delegate
@@ -91,27 +105,24 @@ namespace neam::cr
   ///       It is possible that the function be called \e during the call to release().
   ///
   /// \note memory is never freed automatically (unless destructed)
-  template<typename... Args>
-  class event
+  template<typename InnerType>
+  class raw_event
   {
     public:
-      using function_t = fu2::unique_function<void(Args...)>;
-
-      ~event()
+      ~raw_event()
       {
         std::lock_guard _l(lock);
         check::debug::n_check(count == 0, "{}: {} event receiver are still registered, referencing a destroyed object",
-                             ct::type_name<event<Args...>>, functions.size());
+                             ct::type_name<raw_event<InnerType>>, functions.size());
       }
 
-      event_token_t operator += (function_t&& fnc) { return add(std::move(fnc)); }
-      event& operator -= (event_token_t& tk) { remove(tk); return *this; }
+      event_token_t operator += (InnerType&& fnc) { return add(std::move(fnc)); }
+      raw_event& operator -= (event_token_t& tk) { remove(tk); return *this; }
 
-      /// \brief Call the event and all the registered entries
-      void operator()(Args... args) { return call(args...); }
 
-      /// \brief Call the event and all the registered entries
-      void call(Args... args)
+      /// \brief Call fnc over all the registered entries
+      template<typename Fnc>
+      void for_each(Fnc&& fnc)
       {
         {
           uint32_t elem_count;
@@ -141,7 +152,7 @@ namespace neam::cr
               functions[i].in_use += 1;
             }
             // call the function without the lock, so it can perform operations on the event
-            functions[i].func(args...);
+            fnc(functions[i].func);
             // restore the current function pointer:
             {
               std::lock_guard _l(lock);
@@ -160,7 +171,7 @@ namespace neam::cr
 
       /// \brief Add a new function to the event
       /// \returns a token that once destructed removes the function from the event
-      event_token_t add(function_t&& fnc)
+      event_token_t add(InnerType&& fnc)
       {
         std::lock_guard _l(lock);
         const uint64_t key = token;
@@ -174,12 +185,6 @@ namespace neam::cr
           functions[index] = { key, std::move(fnc) };
         ++count;
         return { [this](event_token_t& tk) { remove(tk); }, key };
-      }
-
-      template<typename Class>
-      event_token_t add(Class& self, void(Class::*fnc)(Args...))
-      {
-        return add([&self, fnc](Args... args) { return (self.*fnc)(args...); });
       }
 
       /// \brief Remove a token.
@@ -231,14 +236,82 @@ namespace neam::cr
       struct entry_t
       {
         uint64_t key;
-        function_t func;
+        InnerType func;
         uint32_t in_use = 0;
       };
-      mutable spinlock lock;
       std::vector<entry_t> functions;
       static constexpr uint64_t k_null_token = 0;
       uint64_t token = k_null_token + 1;
       uint32_t count = 0;
+      mutable spinlock lock;
+  };
+
+  /// \brief Simple (thread-safe) multicast delegate
+  /// \note entries added during a call() will not receive all the events currently being dispatched
+  ///       (can be added by another thread or by a callee)
+  ///
+  /// \note if an entry removes itself during its invocation, and there are multiple invocations in progress,
+  ///       it is guaranteed that \e after the release() call on the token has returned, the function will not be called again
+  ///       It is possible that the function be called \e during the call to release().
+  ///
+  /// \note memory is never freed automatically (unless destructed)
+  template<typename... Args>
+  class event : public raw_event<fu2::unique_function<void(Args...)>>
+  {
+    private:
+      using parent_t = raw_event<fu2::unique_function<void(Args...)>>;
+
+    public:
+      using function_t = fu2::unique_function<void(Args...)>;
+
+      /// \brief Call the event and all the registered entries
+      void operator()(Args... args) { return call(args...); }
+
+      /// \brief Call the event and all the registered entries
+      void call(Args... args)
+      {
+        parent_t::for_each([&](function_t& fnc)
+        {
+          fnc(args...);
+        });
+      }
+
+      using parent_t::add;
+      using parent_t::remove;
+      using parent_t::get_number_of_listeners;
+
+      /// \brief Add a function, but dispatch a task in the current group when triggered
+      event_token_t add(threading::task_manager& tm, std::function<void()>&& fnc)
+      {
+        return parent_t::add([fnc = std::move(fnc), &tm]
+        {
+          tm.get_task([fnc]() { fnc(); });
+        });
+      }
+
+      /// \brief Add a function, but dispatch a task in the specified group when triggered
+      event_token_t add(threading::task_manager& tm, threading::group_t grp, std::function<void()>&& fnc)
+      {
+        return parent_t::add([fnc = std::move(fnc), &tm, grp]
+        {
+          tm.get_task(grp, [fnc]() { fnc(); });
+        });
+      }
+
+      /// \brief Add a function, but dispatch a task in the specified group when triggered
+      event_token_t add(threading::task_manager& tm, id_t grp, std::function<void()>&& fnc)
+      {
+        return parent_t::add([fnc = std::move(fnc), &tm, grp]
+        {
+          tm.get_task(grp, [fnc]() { fnc(); });
+        });
+      }
+
+      template<typename Class>
+      event_token_t add(Class& self, void(Class::*fnc)(Args...))
+      {
+        return parent_t::add([&self, fnc](Args... args) { return (self.*fnc)(args...); });
+      }
   };
 }
 
