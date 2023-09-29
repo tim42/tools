@@ -85,37 +85,52 @@ namespace neam::async
         std::atomic<unsigned> counter = 0;
 
         static shared_lock_state_t* create() { return new shared_lock_state_t{{}, 1}; }
-        void acquire() { if (counter++ == 0) check::debug::n_assert(false, "invalid state detected"); }
-        void release() { if (--counter == 0) {delete this;} }
+        void acquire()
+        {
+          const unsigned val = counter.fetch_add(1, std::memory_order::acq_rel);
+          check::debug::n_assert(val != ~0u, "invalid state detected");
+        }
+        void release()
+        {
+          const unsigned val = counter.fetch_sub(1, std::memory_order::acq_rel);
+          check::debug::n_assert(val > 0, "invalid state detected");
+          if (val <= 1)
+          {
+            delete this;
+          }
+        }
       };
       struct shared_lock_t
       {
         shared_lock_t() : state(shared_lock_state_t::create()) {}
         shared_lock_t(std::nullptr_t) : state(nullptr) {}
-        ~shared_lock_t() { if (state) { state.load(std::memory_order::relaxed)->release(); } state.store(nullptr, std::memory_order::relaxed); }
+        ~shared_lock_t()
+        {
+          check::debug::n_assert(locked_state == nullptr, "trying to destruct a locked lock");
+          if (state.load(std::memory_order::relaxed)) state.load(std::memory_order::relaxed)->release();
+          state.store(nullptr, std::memory_order::relaxed);
+        }
         shared_lock_t(const shared_lock_t& o) : state(o.state.load(std::memory_order::relaxed))
         {
-          if (state) state.load(std::memory_order::relaxed)->acquire();
+          if (state.load(std::memory_order::relaxed)) state.load(std::memory_order::relaxed)->acquire();
         }
         shared_lock_t(shared_lock_t&& o) : state(o.state) { o.state.store(nullptr, std::memory_order::relaxed); }
         shared_lock_t& operator = (const shared_lock_t& o)
         {
           if (&o == this) return *this;
-          if (state) state.load(std::memory_order::relaxed)->release();
+          if (state.load(std::memory_order::relaxed)) state.load(std::memory_order::relaxed)->release();
           state.store(o.state.load(std::memory_order::relaxed), std::memory_order::relaxed);
-          if (state) state.load(std::memory_order::relaxed)->acquire();
+          if (state.load(std::memory_order::relaxed)) state.load(std::memory_order::relaxed)->acquire();
           return *this;
         }
         shared_lock_t& operator = (shared_lock_t&& o)
         {
           if (&o == this) return *this;
+          if (state.load(std::memory_order::relaxed)) state.load(std::memory_order::relaxed)->release();
           state.store(o.state.load(std::memory_order::relaxed), std::memory_order::relaxed);
           o.state.store(nullptr, std::memory_order::relaxed);
           return *this;
         }
-
-        // lock must be held
-        void drop() { if (state) state.load(std::memory_order::relaxed)->release(); state.store(nullptr, std::memory_order::relaxed); }
 
         // because the value of state can change during the waiting-for-lock period
         // we must have a specific way to lock the lock
@@ -133,6 +148,7 @@ namespace neam::async
         {
           check::debug::n_assert(locked_state != nullptr, "cannot unlock an already unlocked state");
           locked_state->lock.unlock();
+          locked_state->release();
           locked_state = nullptr;
         }
 
@@ -144,12 +160,13 @@ namespace neam::async
           if (state_cpy->lock.try_lock())
           {
             locked_state = state_cpy;
+            locked_state->acquire();
             return true;
           }
           return false;
         }
 
-        operator bool() const { return state != nullptr; }
+        operator bool() const { return state.load(std::memory_order::relaxed) != nullptr; }
 
         std::atomic<shared_lock_state_t*> state = nullptr;
         shared_lock_state_t* locked_state = nullptr;
@@ -172,14 +189,16 @@ namespace neam::async
           void complete(Args... args)
           {
             lock.lock();
-            check::debug::n_assert(is_completed == false, "double state completion detected");
+            check::debug::n_assert(is_completed == false || multi_completable, "double state completion detected");
+            if (!can_complete)
+              return;
             is_completed = true;
 
             if (on_completed)
             {
               lock.unlock();
 #if N_ASYNC_USE_TASK_MANAGER
-              if (tm != nullptr)
+              if (tm != nullptr && !multi_completable)
               {
                 // small gymnastic to still forward everything and not loose stuff around.
                 tm->get_task(group_id, [...args = std::forward<wrap_arg_t<Args>>(args), on_completed = std::move(on_completed)]() mutable
@@ -195,10 +214,12 @@ namespace neam::async
               }
               return;
             }
+
             std::lock_guard _lg(lock, std::adopt_lock);
 
             if (link)
             {
+              check::debug::n_assert(!multi_completable, "trying to complete a multi-completable state that has not been fully setup");
               link->completed_args.emplace(std::forward<Args>(args)...);
               link->link = nullptr;
               link = nullptr;
@@ -248,6 +269,8 @@ namespace neam::async
             canceled = o.canceled;
             on_cancel_cb = std::move(o.on_cancel_cb);
             is_completed = o.is_completed;
+            can_complete = o.can_complete;
+            multi_completable = o.multi_completable;
             link = o.link;
             if (link)
               link->link = this;
@@ -284,6 +307,13 @@ namespace neam::async
           }
 #endif
 
+          /// \brief Support multi-completion events
+          /// \note In this mode, the state _must_ have the on_completed function setup.
+          void support_multi_completion(bool support)
+          {
+            multi_completable = support;
+          }
+
         private:
           explicit state(chain& _link) : link(&_link), lock(_link.lock) {}
 #if N_ASYNC_USE_TASK_MANAGER
@@ -300,7 +330,7 @@ namespace neam::async
           void cancel()
           {
             // lock must be held
-            if (!canceled)
+            if (!canceled && (!is_completed || multi_completable))
             {
               canceled = true;
               if (on_cancel_cb)
@@ -317,6 +347,8 @@ namespace neam::async
 
           bool canceled = false;
           bool is_completed = false;
+          bool can_complete = true;
+          bool multi_completable = false;
 
           shared_lock_t lock;
 
@@ -330,10 +362,11 @@ namespace neam::async
 
       chain() = default;
 
-      state create_state()
+      state create_state(bool multi_completable = false)
       {
         check::debug::n_assert(link == nullptr, "create_state called when a state is already in use");
         state ret(*this);
+        ret.support_multi_completion(multi_completable);
         link = &ret;
         return ret;
       }
@@ -524,25 +557,30 @@ namespace neam::async
 #endif
         Func&& cb) -> auto
       {
+        bool is_state_multi_completable = false;
+        {
+          std::lock_guard _lg(lock);
+          if (link != nullptr)
+            is_state_multi_completable = link->multi_completable;
+        }
+
         using ret_type = std::invoke_result_t<Func, Args...>;
         if constexpr (std::is_same_v<ret_type, void>)
         {
           chain<> ret;
-          then_void(N_ASYNC_FWD_PARAMS [cb = std::move(cb), state = ret.create_state()] (Args... args) mutable
+          then_void(N_ASYNC_FWD_PARAMS [cb = std::move(cb), state = ret.create_state(is_state_multi_completable)] (Args... args) mutable
           {
             cb(std::forward<Args>(args)...);
             state.complete();
           });
           return ret;
-
-//           return then_void(N_ASYNC_FWD_PARAMS std::forward<Func>(cb));
         }
         else if constexpr (is_chain<ret_type>::value)
         {
           // Do all the gymnastic internally.
           // The state is kept alive as a lambda capture
           ret_type ret;
-          then_void(N_ASYNC_FWD_PARAMS [cb = std::move(cb), state = ret.create_state()] (Args... args) mutable
+          then_void(N_ASYNC_FWD_PARAMS [cb = std::move(cb), state = ret.create_state(is_state_multi_completable)] (Args... args) mutable
           {
             // link the states together/chains:
             // we could use then() but the draw-back of then() is recursion.
@@ -556,7 +594,7 @@ namespace neam::async
         {
           using chain_type = std::conditional_t<std::is_trivially_copyable_v<ret_type>, ret_type, ret_type&&>;
           chain<chain_type> ret;
-          then_void(N_ASYNC_FWD_PARAMS [cb = std::move(cb), state = ret.create_state()] (Args... args) mutable
+          then_void(N_ASYNC_FWD_PARAMS [cb = std::move(cb), state = ret.create_state(is_state_multi_completable)] (Args... args) mutable
           {
             // link the states together/chains:
             state.complete(cb(std::forward<Args>(args)...));
