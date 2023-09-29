@@ -49,6 +49,8 @@
 #include "../raw_memory_pool_ts.hpp"
 #include "../spinlock.hpp"
 
+#include "ip.hpp"
+
 namespace neam::io
 {
   /// \brief manage async file access/network. Mostly optimized for reads.
@@ -64,11 +66,15 @@ namespace neam::io
       static constexpr uint8_t k_max_cycle_to_close = 6;
       static constexpr size_t k_max_open_file_count = 384;
 
+      // Necessary for queue_multi_receive. Only allocated on the first multi-receive process.
+      static constexpr size_t k_prealloc_buffer_count = 8;
+      static constexpr size_t k_prealloc_buffer_size = 6 * 1024 * 1024;
+
     public:
-      using read_chain = async::chain<raw_data&& /*data*/, bool /*success*/>;
-      using write_chain = async::chain<bool /*success*/>;
+      using read_chain = async::chain<raw_data&& /*data*/, bool /*success*/, size_t /*read_size*/>;
+      using write_chain = async::chain<raw_data&& /*data*/, bool /*success*/, size_t /*write_size*/>;
       using connect_chain = async::chain<bool /*success*/>;
-      using accept_chain = async::chain<id_t /* connection id (or invald)*/>;
+      using accept_chain = async::chain<id_t /* connection id (or invalid)*/>;
 
       static constexpr size_t whole_file = ~uint64_t(0);
       static constexpr size_t append = ~uint64_t(0); // for writes only, indicate we want to append
@@ -106,6 +112,11 @@ namespace neam::io
       }
 #endif
 
+    public: // general IO stuff
+      id_t stdin();
+      id_t stdout();
+      id_t stderr();
+
     public: // file stuff
       const std::string& get_prefix_directory() const { return prefix_directory; }
       void set_prefix_directory(std::string prefix)
@@ -140,8 +151,9 @@ namespace neam::io
 
       static id_t get_file_id(const std::string& path)
       {
-        return string_id::_runtime_build_from_string(path.data(), path.size());
+        return (id_t)((uint64_t)((id_t)string_id::_runtime_build_from_string(path.data(), path.size())) >> k_id_shift);
       }
+
 
       void unmap_file(id_t fid)
       {
@@ -166,53 +178,20 @@ namespace neam::io
       }
 
       /// \brief queue a read operation
-      /// \param do_not_call_process should only be set to true when you follow the current call by another queue_read on the same file (for stuff like chunked-readig)
-      /// \note may trigger a process if the waiting queue becomes too long
       /// \warning order of reads is not guaranteed unless reads are on contiguous chunks of data
       ///          (contiguous: offset + size = next_read_offset)
       ///          (in this case the order will be from the lowest offset to the highest one, not the submission order)
-      [[nodiscard]] read_chain queue_read(id_t fid, size_t offset, size_t size, bool do_not_call_process = false)
-      {
-        check::debug::n_assert(size > 0, "Reads of size 0 are invalid");
-        check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid read operation");
+      [[nodiscard]] read_chain queue_read(id_t fid, size_t offset, size_t size);
 
-        if (size == whole_file)
-          size = get_file_size(fid);
-        if (size == k_invalid_file_size)
-          return read_chain::create_and_complete({}, false);
-
-        read_chain ret;
-        const size_t pending_size = read_requests.add_request({fid, offset, size, ret.create_state()});
-        if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
-        {
-          process();
-        }
-        return ret;
-      }
+      /// \brief queue a read operation using pre-existing data
+      [[nodiscard]] read_chain queue_read(id_t fid, size_t offset, size_t size, raw_data&& data, uint32_t offset_in_data = 0);
 
       /// \brief queue a write operation
-      /// \param do_not_call_process should only be set to true when you follow the current call by another queue_write on the same file (for stuff like chunked-readig)
       /// \note an offset of 0 will truncate the file if it isn't already opened)
-      /// \note may trigger a process if the waiting queue becomes too long
       /// \warning order of writes are not guranteed unless writes are on contiguous chunks of data
       ///          (contiguous: offset + data.size = next_write_offset)
       ///          (in this case the order will be from the lowest offset to the highest one, not the submission order)
-      write_chain queue_write(id_t fid, size_t offset, raw_data&& data, bool do_not_call_process = false)
-      {
-        check::debug::n_check(data.size > 0, "Writes of size 0 are invalid");
-        check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid write operation");
-        if (data.size == 0)
-          return write_chain::create_and_complete(false);
-
-        write_chain ret;
-        const size_t pending_size = write_requests.add_request({fid, offset, std::move(data), ret.create_state()});
-
-        if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
-        {
-          process();
-        }
-        return ret;
-      }
+      write_chain queue_write(id_t fid, size_t offset, raw_data&& data, uint32_t offset_in_data = 0, uint32_t size_to_write = 0);
 
       static constexpr size_t k_invalid_file_size = ~size_t(0);
       /// \brief returns on-disk size of the file
@@ -221,18 +200,6 @@ namespace neam::io
       /// \brief return the most recent of either the modified time or the created time
       /// (some copy utilities seems to keep the modified date but only update the created date)
       [[nodiscard]] std::filesystem::file_time_type get_modified_or_created_time(id_t fid) const;
-
-      std::string_view get_filename(id_t fid) const
-      {
-        if (fid == id_t::invalid)
-          return "id:invalid";
-        if (fid == id_t::none)
-          return "id:none";
-        std::lock_guard<spinlock> _ml(mapped_lock);
-        if (auto it = mapped_files.find(fid); it != mapped_files.end())
-          return it->second;
-        return "id:not-a-mapped-file";
-      }
 
       const char* get_c_filename(id_t fid) const
       {
@@ -246,6 +213,10 @@ namespace neam::io
         return nullptr;
       }
 
+      /// \brief Returns a string the indicates what the id is.
+      /// It returns the filename for file-mapped ids, or a descriptive info for sockets, pipes, ...
+      std::string get_string_for_id(id_t fid) const;
+
     public: // network stuff
       /// \brief 4 bytes to a uint representing an ipv4
       static constexpr uint32_t ipv4(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
@@ -253,17 +224,19 @@ namespace neam::io
         return (uint32_t)(a) << 24 | (uint32_t)(b) << 16 | (uint32_t)(c) << 8 | (uint32_t)(d);
       }
 
-      /// \brief Create a socket + call bind/listen on it.
+      /// \brief Create a socket + call bind/listen on it. tcp/IPV4 version.
       [[nodiscard]] id_t create_listening_socket(uint16_t port = 0, uint32_t listen_addr = ipv4(0, 0, 0, 0) /*INADDR_ANY*/, uint16_t backlog_connection_count = 16);
+      /// \brief Create a socket + call bind/listen on it. tcp/IPV6 version.
+      [[nodiscard]] id_t create_listening_socket(uint16_t port = 0, const ipv6& ip = ipv6::any(), uint16_t backlog_connection_count = 16, bool allow_ipv4 = true);
 
       /// \brief Create a socket + (for use with queue_connect)
-      [[nodiscard]] id_t create_socket();
+      [[nodiscard]] id_t create_socket(bool ipv6 = false);
 
       /// \brief connect to a host. Return whether the connect has succeeded or not.
-      [[nodiscard]] connect_chain queue_connect(id_t fid, std::string host, bool do_not_call_process = false)
+      [[nodiscard]] connect_chain queue_connect(id_t fid, std::string host, uint32_t port, bool do_not_call_process = false)
       {
         connect_chain ret;
-        const size_t pending_size = connect_requests.add_request({fid, _get_fd(fid), std::move(host), ret.create_state()});
+        const size_t pending_size = connect_requests.add_request({fid, _get_fd(fid), std::move(host), port, ret.create_state()});
         if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
         {
           process();
@@ -278,21 +251,38 @@ namespace neam::io
 
       /// \brief Accept a connection.
       /// Return the new connection id (or invalid)
-      [[nodiscard]] accept_chain queue_accept(id_t fid, bool do_not_call_process = false)
+      [[nodiscard]] accept_chain queue_accept(id_t fid)
       {
         accept_chain ret;
-        const size_t pending_size = accept_requests.add_request({fid, _get_fd(fid), ret.create_state()});
-        if (!is_called_on_multiple_threads && !do_not_call_process && pending_size >= k_max_pending_queue_size)
-        {
-          process();
-        }
+        accept_requests.add_request({fid, _get_fd(fid), false, ret.create_state()});
         return ret;
       }
+
+      /// \brief Accept multiple connections.
+      /// Return the new connection id (or invalid)
+      /// \note the completion chain will be triggered more than once, until it is cancelled or an error occurs
+      [[nodiscard]] accept_chain queue_multi_accept(id_t fid)
+      {
+        accept_chain ret;
+        accept_requests.add_request({fid, _get_fd(fid), true, ret.create_state(true)});
+        return ret;
+      }
+
+      [[nodiscard]] read_chain queue_receive(id_t fid, size_t size, raw_data&& data = {}, uint32_t offset_in_data = 0);
+      [[nodiscard]] read_chain queue_full_receive(id_t fid, size_t size, raw_data&& data = {}, uint32_t offset_in_data = 0);
+      [[nodiscard]] read_chain queue_multi_receive(id_t fid);
+
+      [[nodiscard]] write_chain queue_send(id_t fid, raw_data&& data, uint32_t offset_in_data = 0, size_t size = 0);
+      [[nodiscard]] write_chain queue_full_send(id_t fid, raw_data&& data, uint32_t offset_in_data = 0, size_t size = 0);
 
     public: // misc stuff:
       /// \brief Create a pipe, with a read-end and a write-end
       /// \note if the return value is false, both read and write are unchanegd
       bool create_pipe(id_t& read, id_t& write);
+
+      /// \brief Cancel all the pending operations on the given id.
+      /// \note The id must be flagged as a non-automanaged id (pipe / socket / std{in,out,err})
+      void cancel_all_pending_operations_for(id_t eid);
 
     public: // deferred operations (not async, only deferred. Can be canceled)
       async::continuation_chain _queue_deferred_operation()
@@ -309,12 +299,12 @@ namespace neam::io
         {
           if (!is_file_mapped(file_id))
           {
-            cr::out().debug("io::context: could not remove {}: file not mapped", get_filename(file_id));
+            cr::out().debug("io::context: could not remove {}: file not mapped", get_string_for_id(file_id));
             return false;
           }
           std::error_code ec;
-          cr::out().debug("io::context: removing {}", get_filename(file_id));
-          std::filesystem::remove(get_filename(file_id), ec);
+          cr::out().debug("io::context: removing {}", get_string_for_id(file_id));
+          std::filesystem::remove(get_string_for_id(file_id), ec);
           return !!ec;
         });
       }
@@ -340,6 +330,8 @@ namespace neam::io
                || read_requests.has_any_in_flight()
                || accept_requests.has_any_in_flight()
                || connect_requests.has_any_in_flight()
+               || recv_requests.has_any_in_flight()
+               || send_requests.has_any_in_flight()
                || deferred_requests.has_any_in_flight()
                ;
       }
@@ -352,6 +344,8 @@ namespace neam::io
                || read_requests.has_any_pending()
                || accept_requests.has_any_pending()
                || connect_requests.has_any_pending()
+               || recv_requests.has_any_pending()
+               || send_requests.has_any_pending()
                || deferred_requests.has_any_pending()
                ;
       }
@@ -384,6 +378,8 @@ namespace neam::io
                + read_requests.get_in_flight_count()
                + accept_requests.get_in_flight_count()
                + connect_requests.get_in_flight_count()
+               + recv_requests.get_in_flight_count()
+               + send_requests.get_in_flight_count()
                + deferred_requests.get_in_flight_count()
                ;
       }
@@ -397,6 +393,8 @@ namespace neam::io
                + read_requests.get_in_queued_count()
                + accept_requests.get_in_queued_count()
                + connect_requests.get_in_queued_count()
+               + recv_requests.get_in_queued_count()
+               + send_requests.get_in_queued_count()
                + deferred_requests.get_in_queued_count()
                ;
       }
@@ -404,12 +402,18 @@ namespace neam::io
       uint64_t get_total_written_bytes() const { return stats_total_written_bytes.load(std::memory_order_relaxed); }
       uint64_t get_total_read_bytes() const { return stats_total_read_bytes.load(std::memory_order_relaxed); }
 
+      uint32_t get_opened_file_descriptors() const { return opened_fd.size(); }
+      bool has_too_many_file_descriptors() const { return get_opened_file_descriptors() >= k_max_open_file_count; }
+
     private: // data structure:
       struct read_request
       {
         id_t fid;
         size_t offset;
         size_t size;
+
+        raw_data data;
+        uint32_t offset_in_data;
 
         read_chain::state state;
       };
@@ -419,6 +423,8 @@ namespace neam::io
         id_t fid;
         size_t offset;
         raw_data data;
+        uint32_t offset_in_data;
+        uint32_t size_to_write;
 
         write_chain::state state;
       };
@@ -428,6 +434,8 @@ namespace neam::io
         id_t fid;
         int sock_fd;
 
+        bool multi_accept;
+
         accept_chain::state state;
       };
 
@@ -436,13 +444,46 @@ namespace neam::io
         id_t fid;
         int sock_fd;
         std::string addr;
+        uint32_t port;
 
         connect_chain::state state;
+      };
+
+      struct recv_request
+      {
+        id_t fid;
+        int sock_fd;
+        raw_data data;
+        uint32_t offset_in_data;
+        size_t size_to_recv;
+
+        bool wait_all;
+        bool multishot;
+
+        read_chain::state state;
+      };
+
+      struct send_request
+      {
+        id_t fid;
+        int sock_fd;
+        raw_data data;
+        uint32_t offset_in_data;
+        size_t size_to_send;
+
+        bool wait_all;
+
+        write_chain::state state;
       };
 
       struct deferred_request
       {
         async::continuation_chain::state state;
+      };
+      struct cancel_request
+      {
+        uint64_t data;
+        bool is_fd;
       };
 
       template<typename RequestType>
@@ -453,8 +494,6 @@ namespace neam::io
 
         size_t add_request(RequestType&& rq)
         {
-          // std::lock_guard _l(lock);
-          // requests.emplace_back(std::move(rq));
           requests.push_back(std::move(rq));
           return requests.size();
         }
@@ -465,7 +504,6 @@ namespace neam::io
         }
         bool has_any_pending() const
         {
-          // std::lock_guard _l(lock);
           return !requests.empty();
         }
         void decrement_in_flight()
@@ -479,7 +517,6 @@ namespace neam::io
         }
         unsigned get_in_queued_count() const
         {
-          // std::lock_guard _l(lock);
           return (unsigned)requests.size();
         }
       };
@@ -490,21 +527,23 @@ namespace neam::io
         enum class type_t : uint8_t
         {
           // generic:
-          close,
           read,
           write,
 
           // network:
           accept,
           connect,
+          recv,
+          send,
         };
 
         id_t fid;
         type_t type;
 
-        bool is_canceled;
+        bool multishot : 1;
 
         unsigned iovec_count;
+        unsigned data_offet_array_offset;
         union
         {
           read_chain::state* read_states;
@@ -514,12 +553,16 @@ namespace neam::io
         };
         iovec iovecs[];
 
+        unsigned* get_data_offset_for_iovec(unsigned index);
+        unsigned* get_data_size_for_iovec(unsigned index);
 
         ~query();
 
         static query* allocate(id_t fid, type_t t, unsigned iovec_count);
       };
 
+      static constexpr uint64_t k_external_id_flag = 0x8000000000000000;
+      static constexpr uint64_t k_id_shift = 1;
       struct alignas(id_t) file_descriptor
       {
         int fd;
@@ -544,7 +587,7 @@ namespace neam::io
 
       int open_file(id_t fid, bool read, bool write, bool truncate, bool force_truncate, bool& try_again);
 
-      id_t register_fd(file_descriptor fd);
+      id_t register_fd(file_descriptor fd, bool skip_if_already_registered = false);
       id_t register_socket(int fd, bool accept);
 
       void process_completed_query(io_uring_cqe* cqe);
@@ -558,8 +601,12 @@ namespace neam::io
 
       void queue_readv_operations();
       void queue_writev_operations();
+
       void queue_accept_operations();
       void queue_connect_operations();
+      void queue_recv_operations();
+      void queue_send_operations();
+
       void process_deferred_operations();
 
 
@@ -567,10 +614,15 @@ namespace neam::io
       void process_read_completion(query& q, bool success, size_t sz);
       void process_accept_completion(query& q, bool success, int ret);
       void process_connect_completion(query& q, bool success);
+      void process_recv_completion(query& q, bool success, size_t ret, bool is_using_buffer, uint16_t buffer_index);
+      void process_send_completion(query& q, bool success, size_t ret);
 
       static const char* get_query_type_str(query::type_t t);
 
       bool stat_file(id_t fid, struct stat& st) const;
+
+      // NOTE: Must be called during a process or queue
+      void allocate_buffers_for_multi_ops();
 
     private: // members:
       unsigned queue_depth;
@@ -590,14 +642,19 @@ namespace neam::io
       mutable spinlock fd_lock;
       std::unordered_map<id_t, file_descriptor> opened_fd;
       std::unordered_set<int> fd_to_be_closed; // list of fd to be closed. fd must not be present in opened_fd.
-      std::deque<query*> to_be_canceled; // list of operations to cancel
+      mutable spinlock cancel_lock;
+      std::deque<cancel_request> to_be_canceled; // list of operations to cancel
 
       request<read_request> read_requests;
       request<write_request> write_requests;
       request<accept_request> accept_requests;
       request<connect_request> connect_requests;
+      request<recv_request> recv_requests;
+      request<send_request> send_requests;
       request<deferred_request> deferred_requests;
 
+      raw_data prealloc_multi_buffers[k_prealloc_buffer_count];
+      uint32_t buffer_count = 0;
 
       std::atomic<uint64_t> stats_total_read_bytes = 0;
       std::atomic<uint64_t> stats_total_written_bytes = 0;

@@ -43,6 +43,7 @@ namespace neam::io
   context::context(const unsigned _queue_depth)
     : queue_depth(_queue_depth)
   {
+    signal(SIGPIPE, SIG_IGN); // ignore sigpipe, we handle that with the return value of the syscall
     check::unx::n_assert_success(io_uring_queue_init(queue_depth, &ring, 0));
     check::unx::n_assert_success(io_uring_ring_dontfork(&ring));
   }
@@ -58,6 +59,79 @@ namespace neam::io
 
     // exit uring
     io_uring_queue_exit(&ring);
+  }
+
+  context::read_chain context::queue_read(id_t fid, size_t offset, size_t size)
+  {
+    check::debug::n_assert(size > 0, "Reads of size 0 are invalid");
+    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid read operation");
+
+    if (size == whole_file)
+      size = get_file_size(fid);
+    if (size == k_invalid_file_size)
+      return read_chain::create_and_complete({}, false, 0);
+
+    read_chain ret;
+    read_requests.add_request({fid, offset, size, {}, 0, ret.create_state()});
+    return ret;
+  }
+
+  context::read_chain context::queue_read(id_t fid, size_t offset, size_t size, raw_data&& data, uint32_t offset_in_data)
+  {
+    check::debug::n_assert(size > 0, "Reads of size 0 are invalid");
+    check::debug::n_assert(!!data.data, "Invalid data");
+    check::debug::n_assert(data.size > offset_in_data, "Invalid data / offset provided (data size: {}, offset: {})", data.size, offset_in_data);
+    check::debug::n_assert(data.size - offset_in_data >= size, "Provided data does not have enough space for read (data size: {}, read-size: {})",
+                            data.size - offset_in_data, size);
+    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid read operation");
+
+    if (size == whole_file)
+      size = get_file_size(fid);
+    if (size == k_invalid_file_size)
+      return read_chain::create_and_complete(std::move(data), false, 0);
+
+    read_chain ret;
+    read_requests.add_request({fid, offset, size, std::move(data), offset_in_data, ret.create_state()});
+    return ret;
+  }
+
+  context::write_chain context::queue_write(id_t fid, size_t offset, raw_data&& data, uint32_t offset_in_data, uint32_t size_to_write)
+  {
+    check::debug::n_check(data.size > 0, "Writes of size 0 are invalid");
+    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid write operation");
+    check::debug::n_assert(data.size > offset_in_data, "Invalid data / offset provided (data size: {}, offset: {})", data.size, offset_in_data);
+    if (data.size == 0)
+      return write_chain::create_and_complete(std::move(data), false, 0);
+    if (size_to_write == 0)
+      size_to_write = data.size - offset_in_data;
+    size_to_write = std::min((uint32_t)data.size - offset_in_data, size_to_write);
+
+    write_chain ret;
+    write_requests.add_request({fid, offset, std::move(data), offset_in_data, size_to_write, ret.create_state()});
+    return ret;
+  }
+
+  std::string context::get_string_for_id(id_t fid) const
+  {
+    if (fid == id_t::invalid)
+      return "id:[invalid]";
+    if (fid == id_t::none)
+      return "id:[none]";
+    const uint64_t u64id = (uint64_t)fid;
+    if (u64id & k_external_id_flag)
+    {
+      const file_descriptor fd = *reinterpret_cast<file_descriptor*>(&fid);
+      return fmt::format("external:[fd: {} | type: {}{}{} | caps: {}{}{}]",
+                                     fd.fd,
+                                     fd.socket ? "s" : "", fd.pipe ? "p" : "", fd.file ? "f" : "",
+                                     fd.read ? "r" : "", fd.write ? "w" : "", fd.accept ? "a" : "");
+    }
+    {
+      std::lock_guard<spinlock> _ml(mapped_lock);
+      if (auto it = mapped_files.find(fid); it != mapped_files.end())
+        return fmt::format("mapped-file:[{}]", it->second);
+    }
+    return "id:[unknown]";
   }
 
   bool context::stat_file(id_t fid, struct stat& st) const
@@ -160,7 +234,35 @@ namespace neam::io
 
 
 
+  id_t context::stdin()
+  {
+    return register_fd(
+    {
+      .fd = 0,
+      .pipe = true, // well... not always, but well...
+      .read = true,
+    }, true);
+  }
 
+  id_t context::stdout()
+  {
+    return register_fd(
+    {
+      .fd = 1,
+      .pipe = true, // well... not always, but well...
+      .write = true,
+    }, true);
+  }
+
+  id_t context::stderr()
+  {
+    return register_fd(
+    {
+      .fd = 2,
+      .pipe = true, // well... not always, but well...
+      .write = true,
+    }, true);
+  }
 
 
   // network thingies:
@@ -168,16 +270,19 @@ namespace neam::io
 
 
 
-  id_t context::register_fd(file_descriptor fd)
+  id_t context::register_fd(file_descriptor fd, bool skip_if_already_registered)
   {
     // create an ID for the socket
-    constexpr uint64_t k_external_id_flag = 0x8000000000000000;
 //     const id_t id = (id_t)(k_external_id_flag | fd.fd);
     const id_t id = (id_t)(k_external_id_flag | reinterpret_cast<uint64_t&>(fd));
 
     std::lock_guard<spinlock> _sl(fd_lock);
-    opened_fd.erase(id); // just in case
-    opened_fd.emplace(id, fd);
+    if (skip_if_already_registered)
+    {
+      if (opened_fd.contains(id))
+        return id;
+    }
+    opened_fd.insert_or_assign(id, fd);
 
     return id;
   }
@@ -212,6 +317,122 @@ namespace neam::io
     if (check::unx::n_check_success(getsockname(sock, (struct sockaddr*)&sin, &len)) < 0)
       return 0;
     return ntohs(sin.sin6_port);
+  }
+
+  context::read_chain context::queue_receive(id_t fid, size_t size, raw_data&& data, uint32_t offset_in_data)
+  {
+    check::debug::n_assert(size > 0, "Receives of size 0 are invalid");
+    if (data.data)
+    {
+      check::debug::n_assert(!!data.data, "Invalid data");
+      check::debug::n_assert(data.size > offset_in_data, "Invalid data / offset provided (data size: {}, offset: {})", data.size, offset_in_data);
+      check::debug::n_assert(data.size - offset_in_data >= size, "Provided data does not have enough space for read (data size: {}, read-size: {})",
+                              data.size - offset_in_data, size);
+    }
+    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid receive operation");
+
+    read_chain ret;
+    recv_requests.add_request(
+    {
+      .fid = fid,
+      .sock_fd = _get_fd(fid),
+      .data = std::move(data),
+      .offset_in_data = offset_in_data,
+      .size_to_recv = size,
+      .wait_all = false,
+      .multishot = false,
+      .state = ret.create_state()
+    });
+    return ret;
+  }
+
+  context::read_chain context::queue_full_receive(id_t fid, size_t size, raw_data&& data, uint32_t offset_in_data)
+  {
+    check::debug::n_assert(size > 0, "Receives of size 0 are invalid");
+    if (data.data)
+    {
+      check::debug::n_assert(data.size > offset_in_data, "Invalid data / offset provided (data size: {}, offset: {})", data.size, offset_in_data);
+      check::debug::n_assert(data.size - offset_in_data >= size, "Provided data does not have enough space for read (data size: {}, read-size: {})",
+                              data.size - offset_in_data, size);
+    }
+    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid receive operation");
+
+    read_chain ret;
+    recv_requests.add_request(
+    {
+      .fid = fid,
+      .sock_fd = _get_fd(fid),
+      .data = std::move(data),
+      .offset_in_data = offset_in_data,
+      .size_to_recv = size,
+      .wait_all = true,
+      .multishot = false,
+      .state = ret.create_state()
+    });
+    return ret;
+  }
+
+  context::read_chain context::queue_multi_receive(id_t fid)
+  {
+    read_chain ret;
+    recv_requests.add_request(
+    {
+      .fid = fid,
+      .sock_fd = _get_fd(fid),
+      .data = {},
+      .offset_in_data = 0,
+      .size_to_recv = 0,
+      .wait_all = false,
+      .multishot = true,
+      .state = ret.create_state(true)
+    });
+    return ret;
+  }
+
+  context::write_chain context::queue_send(id_t fid, raw_data&& data, uint32_t offset_in_data, size_t size)
+  {
+    check::debug::n_assert(!!data.data, "Invalid data");
+    check::debug::n_assert(data.size > offset_in_data, "Invalid data / offset provided (data size: {}, offset: {})", data.size, offset_in_data);
+    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid receive operation");
+    if (size == 0)
+      size = data.size - offset_in_data;
+    size = std::min((size_t)data.size - offset_in_data, size);
+
+    write_chain ret;
+    send_requests.add_request(
+    {
+      .fid = fid,
+      .sock_fd = _get_fd(fid),
+      .data = std::move(data),
+      .offset_in_data = offset_in_data,
+      .size_to_send = size,
+      .wait_all = false,
+      .state = ret.create_state()
+    });
+    return ret;
+  }
+
+  context::write_chain context::queue_full_send(id_t fid, raw_data&& data, uint32_t offset_in_data, size_t size)
+  {
+    check::debug::n_assert(!!data.data, "Invalid data");
+    check::debug::n_assert(data.size > offset_in_data, "Invalid data / offset provided (data size: {}, offset: {})", data.size, offset_in_data);
+    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid receive operation");
+    if (size == 0)
+      size = data.size - offset_in_data;
+    size = std::min((size_t)data.size - offset_in_data, size);
+
+    write_chain ret;
+    send_requests.add_request(
+    {
+      .fid = fid,
+      .sock_fd = _get_fd(fid),
+      .data = std::move(data),
+      .offset_in_data = offset_in_data,
+      .size_to_send = size,
+      .wait_all = true,
+      .state = ret.create_state()
+    });
+    return ret;
   }
 
   void context::close(id_t fid)
@@ -267,9 +488,53 @@ namespace neam::io
     return id;
   }
 
-  id_t context::create_socket()
+  id_t context::create_listening_socket(uint16_t port, const ipv6& ip, uint16_t backlog_connection_count, bool allow_ipv4)
   {
-    const int sock = check::unx::n_check_success(socket(PF_INET, SOCK_STREAM, 0));
+    const int sock = check::unx::n_check_success(socket(PF_INET6, SOCK_STREAM, 0));
+    if (sock == -1)
+      return id_t::invalid;
+    const id_t id = register_socket(sock, true);
+
+    {
+      int enable = 1;
+      check::unx::n_check_success(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)));
+    }
+    if (port != 0)
+    {
+      int enable = 1;
+      check::unx::n_check_success(setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)));
+    }
+    {
+      int enable = allow_ipv4 ? 0 /* allow ipv4 */ : 1 /* only ipv6 */;
+      check::unx::n_check_success(setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &enable, sizeof(int)));
+    }
+
+    sockaddr_in6 srv_addr;
+    memset(&srv_addr, 0, sizeof(srv_addr));
+    srv_addr.sin6_family = AF_INET6;
+    srv_addr.sin6_port = htons(port);
+    srv_addr.sin6_flowinfo = 0;
+    srv_addr.sin6_scope_id = 0;
+    srv_addr.sin6_scope_id = 0;
+    memcpy(srv_addr.sin6_addr.s6_addr, ip.addr, sizeof(ip.addr));
+
+    if (check::unx::n_check_success(bind(sock, (const struct sockaddr*)&srv_addr, sizeof(srv_addr))) < 0)
+    {
+      close(id);
+      return id_t::invalid;
+    }
+    if (check::unx::n_check_success(listen(sock, backlog_connection_count)) < 0)
+    {
+      close(id);
+      return id_t::invalid;
+    }
+
+    return id;
+  }
+
+  id_t context::create_socket(bool ipv6)
+  {
+    const int sock = check::unx::n_check_success(socket(ipv6 ? PF_INET6 : PF_INET, SOCK_STREAM, 0));
     if (sock == -1)
       return id_t::invalid;
     const id_t id = register_socket(sock, false);
@@ -353,6 +618,8 @@ namespace neam::io
     queue_writev_operations();
     queue_accept_operations();
     queue_connect_operations();
+    queue_recv_operations();
+    queue_send_operations();
 
     process_completed_queries();
 
@@ -438,10 +705,11 @@ namespace neam::io
     // cleanup the remaining allocated memory / call destructors
     for (unsigned i = 0; i < iovec_count; ++i)
     {
-      operator delete (iovecs[i].iov_base);
-      if (type == type_t::read)
+      if (iovecs[i].iov_base != nullptr)
+        operator delete ((void*)((uint8_t*)iovecs[i].iov_base - *get_data_offset_for_iovec(i)));
+      if (type == type_t::read || type == type_t::recv)
         read_states[i].~state();
-      else if (type == type_t::write)
+      else if (type == type_t::write || type == type_t::send)
         write_states[i].~state();
     }
     if (type == type_t::accept)
@@ -459,20 +727,27 @@ namespace neam::io
     size_t callback_size = 0;
     switch (t)
     {
+      case type_t::recv: [[fallthrough]];
       case type_t::read: callback_size = sizeof(read_chain::state); break;
+
+      case type_t::send: [[fallthrough]];
       case type_t::write: callback_size = sizeof(write_chain::state); break;
+
       case type_t::accept: callback_size = sizeof(accept_chain::state); break;
       case type_t::connect: callback_size = sizeof(connect_chain::state); break;
-      case type_t::close: callback_size = 0; break;
     }
-    const size_t callback_offset = sizeof(query) + sizeof(iovec) * iovec_count;
+    const size_t offset_offset = sizeof(query) + sizeof(iovec) * iovec_count;
+    const size_t unaligned_callback_offset = offset_offset + sizeof(unsigned) * iovec_count * 2;
+    const size_t callback_offset = unaligned_callback_offset + (unaligned_callback_offset % 16 ? 16 - unaligned_callback_offset % 16 : 0);
     void* ptr = operator new(callback_offset + callback_size * std::max(1u, iovec_count));
     query* q = (query*)ptr;
     q->fid = fid;
     q->type = t;
-    q->is_canceled = false;
     q->iovec_count = iovec_count;
-    if (t == type_t::read)
+    q->data_offet_array_offset = offset_offset;
+    q->multishot = false;
+    memset((uint8_t*)ptr + offset_offset, 0, sizeof(unsigned) * iovec_count * 2);
+    if (t == type_t::read || t == type_t::recv)
     {
       q->read_states = (read_chain::state*)(((uint8_t*)ptr) + callback_offset);
       for (unsigned i = 0; i < iovec_count; ++i)
@@ -480,7 +755,7 @@ namespace neam::io
         new (q->read_states + i) read_chain::state ();
       }
     }
-    else if (t == type_t::write)
+    else if (t == type_t::write || t == type_t::send)
     {
       q->write_states = (write_chain::state*)(((uint8_t*)ptr) + callback_offset);
       for (unsigned i = 0; i < iovec_count; ++i)
@@ -499,6 +774,17 @@ namespace neam::io
       new (q->connect_state) connect_chain::state();
     }
     return q;
+  }
+
+  unsigned* context::query::get_data_offset_for_iovec(unsigned index)
+  {
+    if (index >= iovec_count) return nullptr;
+    return (uint32_t*)((uint8_t*)this + data_offet_array_offset + (index * 2 + 0) * sizeof(uint32_t));
+  }
+  unsigned* context::query::get_data_size_for_iovec(unsigned index)
+  {
+    if (index >= iovec_count) return nullptr;
+    return (uint32_t*)((uint8_t*)this + data_offet_array_offset + (index * 2 + 1) * sizeof(uint32_t));
   }
 
 
@@ -639,43 +925,76 @@ namespace neam::io
     {
       if (data == nullptr)
       {
-        // just a warning 'cause it's a fire-and-forget query
-        check::unx::n_check_code(cqe->res, "io::context::process_completed_queries: fire-and-forget query failed");
+        // just a debug 'cause it's a fire-and-forget query
+        cr::out().debug("io::context::process_completed_queries: fire-and-forget query failed: {}: {}",
+                        debug::errors::unix_errors::get_code_name(cqe->res), debug::errors::unix_errors::get_description(cqe->res));
       }
       else
       {
-        check::unx::n_check_code(cqe->res && !data->is_canceled, "io::context::process_completed_queries: {} query on '{}' failed",
-                                 get_query_type_str(data->type),
-                                 get_filename(data->fid)
-                                );
+        cr::out().debug("io::context::process_completed_queries: {} query on fd {}: {}: {}",
+                        get_query_type_str(data->type), get_string_for_id(data->fid),
+                        debug::errors::unix_errors::get_code_name(cqe->res), debug::errors::unix_errors::get_description(cqe->res));
       }
     }
 
-    // Queries that are pushed without data are 'fire and forget'queries where we don't care about the result
-    // We also don't care about waiting for them
+    const bool multishot_has_more = (cqe->flags & IORING_CQE_F_MORE) == IORING_CQE_F_MORE;
+    const bool is_notif = (cqe->flags & IORING_CQE_F_NOTIF) == IORING_CQE_F_NOTIF;
+    const bool is_using_buffer = (cqe->flags & IORING_CQE_F_BUFFER) == IORING_CQE_F_BUFFER;
+    const uint16_t buffer_idx = is_using_buffer ? (uint32_t)(cqe->flags) >> 16 : 0;
+#if 0
+    if (data)
+      cr::out().debug("completed_queries: {} / {}: has-more: {}, notif: {}, buffer: {} [{}]", get_query_type_str(data->type), (void*)data, multishot_has_more, is_notif, is_using_buffer, buffer_idx);
+    else
+      cr::out().debug("completed_queries: [f-a-f]: has-more: {}, notif: {}, buffer: {} [{}]", multishot_has_more, is_notif, is_using_buffer, buffer_idx);
+#endif
+    // Queries that are pushed without data are 'fire and forget'queries where we don't care about the result, even if they failed
+    // We also don't care about waiting for them (no state to complete)
     if (data != nullptr)
     {
-      switch (data->type)
+      if (!is_notif)
       {
-        case query::type_t::close: break;
-
-        case query::type_t::write: process_write_completion(*data, cqe->res >= 0, cqe->res);
-          write_requests.decrement_in_flight();
-          break;
-        case query::type_t::read: process_read_completion(*data, cqe->res >= 0, cqe->res);
-          read_requests.decrement_in_flight();
-          break;
-        case query::type_t::accept: process_accept_completion(*data, cqe->res >= 0, cqe->res);
-          accept_requests.decrement_in_flight();
-          break;
-        case query::type_t::connect: process_connect_completion(*data, cqe->res >= 0);
-          connect_requests.decrement_in_flight();
-          break;
+        switch (data->type)
+        {
+          case query::type_t::write: process_write_completion(*data, cqe->res >= 0, cqe->res);
+            break;
+          case query::type_t::read: process_read_completion(*data, cqe->res >= 0, cqe->res);
+            break;
+          case query::type_t::accept: process_accept_completion(*data, cqe->res >= 0, cqe->res);
+            break;
+          case query::type_t::connect: process_connect_completion(*data, cqe->res >= 0);
+            break;
+          case query::type_t::recv: process_recv_completion(*data, cqe->res >= 0, cqe->res, is_using_buffer, buffer_idx);
+            break;
+          case query::type_t::send: process_send_completion(*data, cqe->res >= 0, cqe->res);
+            break;
+        }
       }
 
       // cleanup:
-      data->~query();
-      operator delete ((void*)data); // FIXME: use a pool for that !
+      if (!multishot_has_more)
+      {
+        switch (data->type)
+        {
+          case query::type_t::write: write_requests.decrement_in_flight();
+            break;
+          case query::type_t::read: read_requests.decrement_in_flight();
+            break;
+          case query::type_t::accept: accept_requests.decrement_in_flight();
+            break;
+          case query::type_t::connect: connect_requests.decrement_in_flight();
+            break;
+          case query::type_t::recv: recv_requests.decrement_in_flight();
+            break;
+          case query::type_t::send: send_requests.decrement_in_flight();
+            break;
+        }
+        data->~query();
+        operator delete ((void*)data);
+      }
+
+      // re-allocate the lost buffer:
+      if (is_using_buffer)
+        allocate_buffers_for_multi_ops();
     }
 
     io_uring_cqe_seen(&ring, cqe);
@@ -684,10 +1003,6 @@ namespace neam::io
   bool context::queue_close_operations_fd()
   {
     std::lock_guard _fdl(fd_lock);
-    if (fd_to_be_closed.size() > 0)
-      cr::out().debug("queue_close_operations_fd: {} pending close operations", fd_to_be_closed.size());
-    else
-      return true;
 
     bool has_done_any_delete = false;
     while (fd_to_be_closed.size() > 0)
@@ -696,37 +1011,40 @@ namespace neam::io
       // Get a SQE
       io_uring_sqe* const sqe = get_sqe(has_done_any_delete);
       if (!sqe)
-      {
-        cr::out().debug("queue_close_operations_fd: done, incomplete");
         return false;
-      }
 
       has_done_any_delete = true;
       fd_to_be_closed.erase(fd_to_be_closed.begin());
 
       io_uring_prep_close(sqe, fd);
+      io_uring_sqe_set_flags(sqe, IOSQE_CQE_SKIP_SUCCESS);
       io_uring_sqe_set_data(sqe, nullptr);
       check::unx::n_check_success(io_uring_submit(&ring));
     }
-    cr::out().debug("queue_close_operations_fd: done !");
     return true;
   }
 
   void context::cancel_operation(query& q)
   {
-    std::lock_guard _fdl(fd_lock);
-    to_be_canceled.push_back(&q);
+    std::lock_guard _fdl(cancel_lock);
+    to_be_canceled.push_back({ .data = reinterpret_cast<uint64_t>(&q), .is_fd = false, });
+  }
+
+  void context::cancel_all_pending_operations_for(id_t eid)
+  {
+    const int fd = _get_fd(eid);
+    if (fd < 0) return;
+
+    std::lock_guard _fdl(cancel_lock);
+    to_be_canceled.push_back({ .data = (uint64_t)fd, .is_fd = true, });
   }
 
   void context::queue_cancel_operations()
   {
-    std::lock_guard _fdl(fd_lock);
-    if (to_be_canceled.size() > 0)
-      cr::out().debug("queue_cancel_operations: {} pending cancel operations", to_be_canceled.size());
-
+    std::lock_guard _fdl(cancel_lock);
     while (to_be_canceled.size() > 0)
     {
-      query* q = to_be_canceled.front();
+      cancel_request rq = to_be_canceled.front();
 
       // Get a SQE
       io_uring_sqe* const sqe = get_sqe(true);
@@ -735,9 +1053,13 @@ namespace neam::io
 
       to_be_canceled.pop_front();
 
-      q->is_canceled = true;
+      if (rq.is_fd)
+        io_uring_prep_cancel_fd(sqe, (int)rq.data, IORING_ASYNC_CANCEL_ALL);
+      else
+        io_uring_prep_cancel64(sqe, rq.data, IORING_ASYNC_CANCEL_ALL);
 
-      io_uring_prep_cancel(sqe, q, 0);
+      io_uring_sqe_set_flags(sqe, IOSQE_CQE_SKIP_SUCCESS);
+
       io_uring_sqe_set_data(sqe, nullptr);
       check::unx::n_check_success(io_uring_submit(&ring));
     }
@@ -745,10 +1067,6 @@ namespace neam::io
 
   void context::queue_readv_operations()
   {
-    // so we can call the failed states outside the read lock
-    std::vector<read_chain::state> failed_states;
-
-      // std::lock_guard _prl(read_requests.lock);
     if (read_requests.requests.empty())
       return;
     std::deque<read_request> requests;
@@ -759,7 +1077,6 @@ namespace neam::io
     }
 
     {
-      //cr::out().debug("queue_readv_operations: {} pending read operations", pending_reads.size());
       // sort reads by fid, so we have reads for the same file at the same place (better for readv)
       std::sort(requests.begin(), requests.end(), [](const read_request& a, const read_request& b)
       {
@@ -790,7 +1107,7 @@ namespace neam::io
           // fail all the queries for the same fid:
           while (!requests.empty() && fid == requests.front().fid)
           {
-            failed_states.emplace_back(std::move(requests.front().state));
+            requests.front().state.complete(std::move(requests.front().data), false, 0);
             requests.pop_front();
           }
 
@@ -824,7 +1141,16 @@ namespace neam::io
         for (unsigned i = 0; i < iovec_count; ++i)
         {
           q->iovecs[i].iov_len = requests.front().size;
-          q->iovecs[i].iov_base = operator new(requests.front().size);
+          if (requests.front().data.size > 0)
+          {
+            q->iovecs[i].iov_base = (uint8_t*)requests.front().data.data.release() + requests.front().offset_in_data;
+            *(q->get_data_offset_for_iovec(i)) = requests.front().offset_in_data;
+            *(q->get_data_size_for_iovec(i)) = requests.front().data.size;
+          }
+          else
+          {
+            q->iovecs[i].iov_base = operator new(requests.front().size);
+          }
           q->read_states[i] = std::move(requests.front().state);
 
           memset(q->iovecs[i].iov_base, 0, requests.front().size); // so valgrind is happy, can be skipped
@@ -853,20 +1179,10 @@ namespace neam::io
     {
       read_requests.add_request(std::move(it));
     }
-
-    // complete the failed states outside the readlock so that they can queue read operations
-    for (auto& state : failed_states)
-    {
-      state.complete({raw_data::unique_ptr(), 0}, false);
-    }
   }
 
   void context::queue_writev_operations()
   {
-    // so we can call the failed states outside the write lock
-    std::vector<write_chain::state> failed_states;
-
-    // std::lock_guard _pwl(write_requests.lock);
     if (write_requests.requests.empty())
       return;
     std::deque<write_request> requests;
@@ -876,7 +1192,6 @@ namespace neam::io
         requests.emplace_back(std::move(rq));
     }
     {
-      //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
 
       // sort reads by fid, so we have reads for the same file at the same place (better for readv)
       std::sort(requests.begin(), requests.end(), [](const write_request& a, const write_request& b)
@@ -908,7 +1223,7 @@ namespace neam::io
           // fail all the queries for the same fid:
           while (!requests.empty() && fid == requests.front().fid)
           {
-            failed_states.emplace_back(std::move(requests.front().state));
+            requests.front().state.complete(std::move(requests.front().data), false, 0);
             requests.pop_front();
           }
 
@@ -940,7 +1255,7 @@ namespace neam::io
                 break;
               if (requests[iovec_count].offset == append)
                 break;
-              offset += requests[iovec_count].data.size;
+              offset += requests[iovec_count].size_to_write;
             }
             else
             {
@@ -956,8 +1271,11 @@ namespace neam::io
 
         for (unsigned i = 0; i < iovec_count; ++i)
         {
-          q->iovecs[i].iov_len = requests.front().data.size;
-          q->iovecs[i].iov_base = requests.front().data.data.release();
+          *(q->get_data_offset_for_iovec(i)) = requests.front().offset_in_data;
+          *(q->get_data_size_for_iovec(i)) = requests.front().data.size;
+
+          q->iovecs[i].iov_len = requests.front().size_to_write;
+          q->iovecs[i].iov_base = (uint8_t*)requests.front().data.data.release() + requests.front().offset_in_data;
           q->write_states[i] = std::move(requests.front().state);
           requests.pop_front();
         }
@@ -986,20 +1304,12 @@ namespace neam::io
     {
       write_requests.add_request(std::move(it));
     }
-
-    // complete the failed states outside the readlock so that they can queue read operations
-    for (auto& state : failed_states)
-    {
-      state.complete(false);
-    }
   }
 
   void context::queue_accept_operations()
   {
-    // std::lock_guard _al(accept_requests.lock);
     if (accept_requests.requests.empty())
       return;
-    //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
 
     bool has_done_any_accepts = false;
 
@@ -1027,7 +1337,12 @@ namespace neam::io
 
       *(q->accept_state) = std::move(rq.state);
 
-      io_uring_prep_accept(sqe, fd, nullptr, nullptr, 0);
+      q->multishot = rq.multi_accept;
+
+      if (rq.multi_accept)
+        io_uring_prep_multishot_accept(sqe, fd, nullptr, nullptr, 0);
+      else
+        io_uring_prep_accept(sqe, fd, nullptr, nullptr, 0);
 
       // add the append flags if necessary
       io_uring_sqe_set_data(sqe, q);
@@ -1044,11 +1359,9 @@ namespace neam::io
 
   void context::queue_connect_operations()
   {
-    // so we can call the failed states outside the write lock
     std::vector<connect_chain::state> failed_states;
 
     {
-      // std::lock_guard _al(connect_requests.lock);
       if (connect_requests.requests.empty())
         return;
       //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
@@ -1065,7 +1378,8 @@ namespace neam::io
         const int fd = rq.sock_fd;
 
         addrinfo* result;
-        if (check::unx::n_check_success(getaddrinfo(rq.addr.c_str(), nullptr, nullptr, &result)) < 0)
+        const auto port_str = fmt::format("{}", rq.port);
+        if (check::unx::n_check_success(getaddrinfo(rq.addr.c_str(), port_str.c_str(), nullptr, &result)) < 0)
         {
           failed_states.push_back(std::move(rq.state));
           continue;
@@ -1095,6 +1409,8 @@ namespace neam::io
         check::unx::n_check_success(io_uring_submit(&ring));
         ++connect_requests.in_flight;
 
+        freeaddrinfo(result);
+
         q->connect_state->on_cancel([q, this]
         {
           cancel_operation(*q);
@@ -1106,6 +1422,146 @@ namespace neam::io
     for (auto& state : failed_states)
     {
       state.complete(false);
+    }
+  }
+
+  void context::queue_recv_operations()
+  {
+    if (recv_requests.requests.empty())
+      return;
+
+    bool has_done_any_rq = false;
+
+    recv_request rq;
+    while (recv_requests.requests.try_pop_front(rq))
+    {
+      if (rq.state.is_canceled())
+        continue;
+
+      const id_t fid = rq.fid;
+      const int fd = rq.sock_fd;
+
+      if (rq.multishot)
+        allocate_buffers_for_multi_ops();
+
+      // Get a SQE
+      io_uring_sqe* const sqe = get_sqe(has_done_any_rq);
+      if (!sqe)
+      {
+        recv_requests.add_request(std::move(rq));
+        break;
+      }
+
+      has_done_any_rq = true;
+
+      // Allocate + fill the query structure:
+      query* q = query::allocate(fid, query::type_t::recv, 1);
+
+      q->read_states[0] = std::move(rq.state);
+
+      q->multishot = rq.multishot;
+
+      if (!rq.multishot)
+      {
+        if (!rq.data.data)
+        {
+          rq.data = raw_data::allocate(rq.size_to_recv);
+          rq.offset_in_data = 0;
+        }
+        *(q->get_data_offset_for_iovec(0)) = rq.offset_in_data;
+        *(q->get_data_size_for_iovec(0)) = rq.data.size;
+
+        q->iovecs[0].iov_len = rq.size_to_recv;
+        q->iovecs[0].iov_base = (uint8_t*)rq.data.data.release() + rq.offset_in_data;
+
+        memset(q->iovecs[0].iov_base, 0, q->iovecs[0].iov_len); // so valgrind is happy, can be skipped
+      }
+      else
+      {
+        q->iovecs[0].iov_base = nullptr;
+        q->iovecs[0].iov_len = 0;
+      }
+
+      if (rq.multishot)
+      {
+        io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, 0);
+        io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
+      }
+      else
+      {
+        io_uring_prep_recv(sqe, fd, q->iovecs[0].iov_base, q->iovecs[0].iov_len, rq.wait_all ? MSG_WAITALL : 0);
+      }
+
+      io_uring_sqe_set_data(sqe, q);
+
+      check::unx::n_check_success(io_uring_submit(&ring));
+      ++recv_requests.in_flight;
+
+      q->read_states->on_cancel([q, this]
+      {
+        cancel_operation(*q);
+      });
+    }
+  }
+
+  void context::queue_send_operations()
+  {
+    if (send_requests.requests.empty())
+      return;
+
+    bool has_done_any_rq = false;
+
+    send_request rq;
+    while (send_requests.requests.try_pop_front(rq))
+    {
+      if (rq.state.is_canceled())
+        continue;
+
+      const id_t fid = rq.fid;
+      const int fd = rq.sock_fd;
+
+      // Get a SQE
+      io_uring_sqe* const sqe = get_sqe(has_done_any_rq);
+      if (!sqe)
+      {
+        send_requests.add_request(std::move(rq));
+        break;
+      }
+
+      has_done_any_rq = true;
+
+      // Allocate + fill the query structure:
+      query* q = query::allocate(fid, query::type_t::send, 1);
+
+      q->write_states[0] = std::move(rq.state);
+
+      *(q->get_data_offset_for_iovec(0)) = rq.offset_in_data;
+      *(q->get_data_size_for_iovec(0)) = rq.data.size;
+
+      q->iovecs[0].iov_len = rq.size_to_send;
+      q->iovecs[0].iov_base = (uint8_t*)rq.data.data.release() + rq.offset_in_data;
+
+      const int flags = rq.wait_all ? MSG_WAITALL : 0;
+      if (q->iovecs[0].iov_len < 2 * 1024 * 1024)
+      {
+        // we can do zero-copy, as we have ownership of the data during the write and we keep it alive
+        // It seems performing big zero-copy send generate ENOMEM, failing the send. We only allow buffer less than 2Mib to perform zero copy sends.
+        io_uring_prep_send_zc(sqe, fd, q->iovecs[0].iov_base, q->iovecs[0].iov_len, flags, 0);
+      }
+      else
+      {
+        io_uring_prep_send(sqe, fd, q->iovecs[0].iov_base, q->iovecs[0].iov_len, flags);
+      }
+
+      io_uring_sqe_set_data(sqe, q);
+
+      check::unx::n_check_success(io_uring_submit(&ring));
+      ++send_requests.in_flight;
+
+      q->write_states->on_cancel([q, this]
+      {
+        cancel_operation(*q);
+      });
     }
   }
 
@@ -1129,8 +1585,21 @@ namespace neam::io
 #if N_ASYNC_USE_TASK_MANAGER
       q.write_states[i].set_default_deferred_info(task_manager, group_id);
 #endif
+      void* base_data = (uint8_t*)q.iovecs[i].iov_base - *(q.get_data_offset_for_iovec(i));
+      raw_data data {raw_data::unique_ptr(base_data), *(q.get_data_size_for_iovec(i))};
+      size_t write_size = std::min(sz, q.iovecs[i].iov_len);
+      if (!success)
+      {
+        q.write_states[i].complete(std::move(data), false, 0);
+      }
+      else
+      {
+        q.write_states[i].complete(std::move(data), true, write_size);
+      }
 
-      q.write_states[i].complete(success);
+      sz -= write_size;
+      // We have transfered the ownership to the callback, remove the pointer
+      q.iovecs[i].iov_base = nullptr;
     }
   }
 
@@ -1146,14 +1615,20 @@ namespace neam::io
 #endif
       if (!success)
       {
-        q.read_states[i].complete({raw_data::unique_ptr(), 0}, false);
+        q.read_states[i].complete({raw_data::unique_ptr(), 0}, false, 0);
       }
       else
       {
         // FIXME: Should be dispatched on other threads
-        size_t data_len = std::min(sz, q.iovecs[i].iov_len);
-        q.read_states[i].complete({raw_data::unique_ptr(q.iovecs[i].iov_base), data_len}, true);
-        sz -= data_len;
+        size_t read_size = std::min(sz, q.iovecs[i].iov_len);
+        size_t data_len = *(q.get_data_size_for_iovec(i)) == 0 ? read_size : *(q.get_data_size_for_iovec(i));
+        q.read_states[i].complete
+        (
+          {raw_data::unique_ptr((uint8_t*)q.iovecs[i].iov_base - *(q.get_data_offset_for_iovec(i))), data_len},
+          true, (uint32_t)read_size
+        );
+
+        sz -= read_size;
 
         // We have transfered the ownership to the callback, remove the pointer
         q.iovecs[i].iov_base = nullptr;
@@ -1187,16 +1662,90 @@ namespace neam::io
     q.connect_state->complete(success);
   }
 
+  void context::process_recv_completion(query& q, bool success, size_t sz, bool is_using_buffer, uint16_t buffer_index)
+  {
+    raw_data data;
+    if (!is_using_buffer)
+    {
+      if (!q.multishot)
+      {
+        void* base_data = (uint8_t*)q.iovecs[0].iov_base - *(q.get_data_offset_for_iovec(0));
+        data = {raw_data::unique_ptr(base_data), *(q.get_data_size_for_iovec(0))};
+        // We have transfered the ownership to the callback, remove the pointer
+        q.iovecs[0].iov_base = nullptr;
+      }
+    }
+    else
+    {
+      data = std::move(prealloc_multi_buffers[buffer_index]);
+      data.size = sz;
+    }
+
+    q.read_states[0].complete(std::move(data), success, success ? sz : 0);
+  }
+
+  void context::process_send_completion(query& q, bool success, size_t sz)
+  {
+    void* base_data = (uint8_t*)q.iovecs[0].iov_base - *(q.get_data_offset_for_iovec(0));
+    raw_data data {raw_data::unique_ptr(base_data), *(q.get_data_size_for_iovec(0))};
+    // We have transfered the ownership to the callback, remove the pointer
+    q.iovecs[0].iov_base = nullptr;
+
+    q.write_states[0].complete(std::move(data), success, success ? sz : 0);
+  }
+
+  void context::allocate_buffers_for_multi_ops()
+  {
+    if (buffer_count < k_prealloc_buffer_count)
+    {
+      cr::out().debug("io::context: allocating {} buffers of {}Mib...", k_prealloc_buffer_count - buffer_count, k_prealloc_buffer_size / 1024 / 1024);
+      while (buffer_count < k_prealloc_buffer_count)
+      {
+        io_uring_sqe* sqe = get_sqe(false);
+        if (!sqe)
+          return; // might be bad
+        prealloc_multi_buffers[buffer_count] = raw_data::allocate(k_prealloc_buffer_size);
+        memset(prealloc_multi_buffers[buffer_count].get(), 0, k_prealloc_buffer_size);
+
+        io_uring_prep_provide_buffers(sqe, prealloc_multi_buffers[buffer_count].get(), k_prealloc_buffer_size, 1, 0, buffer_count);
+        io_uring_sqe_set_flags(sqe, IOSQE_CQE_SKIP_SUCCESS);
+        check::unx::n_check_success(io_uring_submit(&ring));
+
+        ++buffer_count;
+      }
+    }
+    else
+    {
+      for (uint32_t i = 0; i < k_prealloc_buffer_count; ++i)
+      {
+        if (prealloc_multi_buffers[i].data)
+          continue;
+
+        io_uring_sqe* sqe = get_sqe(false);
+        if (!sqe)
+          return; // might be bad
+        prealloc_multi_buffers[i] = raw_data::allocate(k_prealloc_buffer_size);
+
+        // for valgrind, could be skipped
+        memset(prealloc_multi_buffers[i].get(), 0, k_prealloc_buffer_size);
+
+        io_uring_prep_provide_buffers(sqe, prealloc_multi_buffers[i].get(), k_prealloc_buffer_size, 1, 0, i);
+        io_uring_sqe_set_flags(sqe, IOSQE_CQE_SKIP_SUCCESS);
+        check::unx::n_check_success(io_uring_submit(&ring));
+      }
+    }
+  }
 
   const char* context::get_query_type_str(query::type_t t)
   {
     switch (t)
     {
-      case query::type_t::close: return "close";
       case query::type_t::read: return "read";
       case query::type_t::write: return "write";
       case query::type_t::accept: return "accept";
       case query::type_t::connect: return "connect";
+      case query::type_t::recv: return "recv";
+      case query::type_t::send: return "send";
     }
     return "unknown";
   }
