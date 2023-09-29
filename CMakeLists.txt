@@ -17,20 +17,28 @@ set(PUBLIC_LIBS )
 set(io_srcs)
 if (LIBURING_FOUND)
   message(STATUS "Found liburing (${LIBURING_LIBRARY}), building with neam::io")
-  set(io_srcs io/context.cpp)
+  set(io_srcs io/context.cpp io/network_helper.cpp)
   set(PUBLIC_LIBS ${PUBLIC_LIBS} ${LIBURING_LIBRARY})
 endif()
 
 # create the library
 add_library(ntools
     logger/logger.cpp
+
     id/string_id.cpp
+
     threading/task.cpp
     threading/task_group_graph.cpp
+    threading/named_threads.cpp
     threading/task_manager.cpp
+    threading/types.cpp
+
     rle/serialization_metadata.cpp
     rle/generic_type.cpp
+
     struct_metadata/type_to_string.cpp
+
+    rpc/rpc.cpp
 
     memory.cpp
     sys_utils.cpp
@@ -49,11 +57,14 @@ add_library(ntools
 if (${USE_TRACY})
   message(STATUS "ntools: Profiling with Tracy enabled")
   add_compile_definitions(TRACY_ENABLE=1)
+  target_compile_definitions(ntools INTERFACE TRACY_ENABLE=1)
 endif()
 
 if (${USE_TRACY})
   if (TARGET TracyClient)
     set(PUBLIC_LIBS ${PUBLIC_LIBS} TracyClient)
+    get_target_property(TracyDirs TracyClient INCLUDE_DIRECTORIES)
+    target_include_directories(ntools PUBLIC ${TracyDirs})
   endif()
 endif()
 
