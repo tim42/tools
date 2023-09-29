@@ -2,11 +2,15 @@
 #include <filesystem>
 
 #include "../io/io.hpp"
+#include "../io/network_helper.hpp"
+#include "../io/connections.hpp"
 #include "../threading/threading.hpp"
 
 #include "../logger/logger.hpp"
 #include "../cmdline/cmdline.hpp"
 #include "../ring_buffer.hpp"
+
+#include "task_manager_helper.hpp"
 
 using namespace neam;
 
@@ -28,21 +32,44 @@ N_METADATA_STRUCT(global_options)
   >;
 };
 
+struct connection_state;
+void split_buffer(connection_state& state, uint32_t from = 0);
+void broadcast(io::network::base_server_interface& server_base, std::string&& line)
+{
+  server_base.for_each_connection([line = std::move(line)](auto & connection, cr::token_counter::ref&&)
+  {
+    connection.queue_full_send(raw_data::allocate_from(line));
+  });
+}
 
 // Connection state data. Held alive while a connection is alive.
-struct connection_state
+struct connection_state : public io::network::ring_buffer_connection_t<connection_state>
 {
-  static inline spinlock lock;
-  static inline io::context::accept_chain last_accept;
-  static inline bool should_stop = false;
+  void on_connection_setup()
+  {
+    cr::out().warn("[{}]: new connection (connection count: {})", socket, server_base->get_connection_count() + 1);
+    queue_full_send(raw_data::allocate_from(std::string("[hello. To close the connection: /close, to quit the server: /quit or /force-quit]\n")));
+    broadcast(*server_base, fmt::format("[{} has entered the chat]", socket));
+  }
 
-  neam::id_t socket;
-  cr::ring_buffer<char, 2048> read_buffer;
-  bool is_closed = false;
+  void on_buffer_full()
+  {
+    cr::out().warn("[{}]: Ring buffer is full: closing connection", socket);
+
+    queue_full_send(raw_data::allocate_from(std::string("[connection is being closed: ring buffer is full]\n")))
+    .then([this](raw_data&& /*data*/, bool /*success*/, size_t /*write_size*/)
+    {
+      close();
+    });
+  }
+
+  void on_read(uint32_t start_offset, uint32_t size)
+  {
+    split_buffer(*this, start_offset);
+  }
 };
-using connection_state_ptr = std::unique_ptr<connection_state>;
 
-void handle_line(io::context& ctx, neam::id_t connection, connection_state& state, std::string_view line)
+void handle_line(connection_state& state, std::string_view line)
 {
   if (line.size() == 0) return;
   if (line[0] == '/')
@@ -50,47 +77,59 @@ void handle_line(io::context& ctx, neam::id_t connection, connection_state& stat
     // handle commands: (should be better done, but hey, it works this way)
     if (line == "/quit")
     {
-      cr::out().warn("[{}]: quitting server", connection);
+      cr::out().warn("[{}]: quitting server (waiting for other connections to close)", state.socket);
       {
-        std::lock_guard _lg(connection_state::lock);
-        connection_state::last_accept.cancel();
-        connection_state::should_stop = true;
+        state.server_base->close_listening_socket();
+        // We close the socket, but keep all the other connections alive
       }
-      ctx.queue_write(connection, io::context::append, raw_data::allocate_from(std::string("[goodbie]\n")))
-      .then([ =, &ctx, socket = state.socket](bool)
+      broadcast(*state.server_base, fmt::format("[server is being closed by {}]", state.socket));
+      state.queue_full_send(raw_data::allocate_from(std::string("[goodbie]\n")))
+      .then([&state](raw_data&& /*data*/, bool /*success*/, size_t /*write_size*/)
       {
-        ctx.close(connection);
-        ctx.close(socket);
+        state.close();
+      });
+    }
+    else if (line == "/force-quit")
+    {
+      cr::out().warn("[{}]: quitting server and closing all connections", state.socket);
+      {
+        state.server_base->close_listening_socket();
+      }
+      broadcast(*state.server_base, fmt::format("[server is being closed by {}, all connections will be closed]", state.socket));
+      state.queue_full_send(raw_data::allocate_from(std::string("[goodbie]\n")))
+      .then([&state](raw_data&& /*data*/, bool /*success*/, size_t /*write_size*/)
+      {
+        state.server_base->close_all_connections();
       });
     }
     else if (line == "/close")
     {
-      cr::out().warn("[{}]: closing connection", connection);
-      state.is_closed = true;
-      ctx.queue_write(connection, io::context::append, raw_data::allocate_from(std::string("[goodbie]\n")))
-      .then([ =, &ctx](bool)
+      cr::out().warn("[{}]: closing connection", state.socket);
+      state.queue_full_send(raw_data::allocate_from(std::string("[goodbie]\n")))
+      .then([&state](raw_data&& /*data*/, bool /*success*/, size_t /*write_size*/)
       {
-        ctx.close(connection);
+        state.close();
       });
     }
     else
     {
-      cr::out().warn("[{}]: unknown command: {}", connection, line);
-      ctx.queue_write(connection, io::context::append, raw_data::allocate_from(fmt::format("[unknown command {}]\n", line)));
+      cr::out().warn("[{}]: unknown command: {}", state.socket, line);
+      state.queue_full_send(raw_data::allocate_from(fmt::format("[unknown command {}]\n", line)));
     }
     return;
   }
 
   // simulate work:
   std::this_thread::sleep_for(std::chrono::microseconds(50));
-  // else: send the line back:
-  cr::out().debug("[{}]: line: {}", connection, line);
-  ctx.queue_write(connection, io::context::append, raw_data::allocate_from(fmt::format("[{}]\n", line)));
+  // then: broadcast the line:
+  cr::out().debug("[{}]: msg: {}", state.socket, line);
+
+  broadcast(*state.server_base, fmt::format("[{}]: {}\n", state.socket, line));
 }
 
-// crude """"parser""""
-// (find a /n then move that line to a string_view)
-void split_buffer(io::context& ctx, neam::id_t connection, connection_state& state)
+// crude line splitter
+// (find a \n then move that line to a string_view)
+void split_buffer(connection_state& state, uint32_t from)
 {
   bool found;
 
@@ -99,17 +138,17 @@ void split_buffer(io::context& ctx, neam::id_t connection, connection_state& sta
     found = false;
     if (state.read_buffer.size() == 0)
       return;
-    for (uint32_t i = 0; i < state.read_buffer.size(); ++i)
+    for (uint32_t i = from; i < state.read_buffer.size(); ++i)
     {
       if (state.read_buffer.at(i) == '\n')
       {
         if (i > 0)
         {
           raw_data line_data = raw_data::allocate(i);
-          line_data.size = state.read_buffer.pop_front((char*)line_data.data.get(), i);
+          line_data.size = state.read_buffer.pop_front((uint8_t*)line_data.data.get(), i);
           const std::string_view line {(const char*)line_data.data.get(), line_data.size};
 
-          handle_line(ctx, connection, state, line);
+          handle_line(state, line);
         }
         // remove the ending \n
         state.read_buffer.pop_front();
@@ -117,86 +156,10 @@ void split_buffer(io::context& ctx, neam::id_t connection, connection_state& sta
         break;
       }
     }
+    // because we removed entries from the buffer, we start from 0 next time
+    from = 0;
   }
   while (found); // multiple lines may be sent togethers
-}
-
-void handle_read(io::context& ctx, neam::id_t connection, connection_state_ptr state)
-{
-  // We purposefully do small read to demonstrate the ring buffer thingy and have a lot more cpu time dedicated to io than necessary
-  // A real server would have bigger reads
-  static constexpr size_t k_read_size = 32;
-
-  ctx.queue_read(connection, 0, k_read_size)
-  .then([=, &ctx, state = std::move(state)](raw_data&& data, bool success) mutable
-  {
-    if (success && data.size > 0)
-    {
-      const size_t inserted = state->read_buffer.push_back((const char*)data.data.get(), data.size);
-      if (inserted != data.size)
-      {
-        // "handle" the case where there's no space left in the ring buffer: (send a message then close the connection)
-        // (there is a better way to deal with it, like calling split_buffer and inserting what needs to be inserted, but...)
-        cr::out().warn("[{}]: Ring buffer is full: closing connection", connection);
-        ctx.queue_write(connection, io::context::append, raw_data::allocate_from(std::string("[connection is being closed: ring buffer is full]\n")))
-        .then([=, &ctx](bool)
-        {
-          ctx.close(connection);
-        });
-        return;
-      }
-
-      split_buffer(ctx, connection, *state.get());
-
-      // queue the next read:
-      // (a better way would be to make the state thread-safe and queue the read at the very top of the function
-      //  and cancel it when we have to close the connection)
-      if (!connection_state::should_stop && !state->is_closed)
-        handle_read(ctx, connection, std::move(state));
-    }
-    else
-    {
-      cr::out().warn("[{}]: Connection closed", connection);
-      ctx.close(connection);
-    }
-  });
-}
-
-void on_connection(io::context& ctx, neam::id_t socket, neam::id_t connection)
-{
-  cr::out().log("new connection: {}", connection);
-
-  // send the hello message:
-  ctx.queue_write(connection, io::context::append,
-                  raw_data::allocate_from(std::string("[hello. To close the connection: /close, to quit the server: /quit]\n")));
-
-  // queue reads:
-  auto state = std::make_unique<connection_state>();
-  state->socket = socket;
-  handle_read(ctx, connection, std::move(state));
-}
-
-void queue_accept(io::context& ctx, neam::id_t socket)
-{
-  std::lock_guard _lg(connection_state::lock);
-  connection_state::last_accept = ctx.queue_accept(socket);
-  connection_state::last_accept.then([=, &ctx](neam::id_t connection)
-  {
-    if (connection != neam::id_t::invalid)
-    {
-      on_connection(ctx, socket, connection);
-
-      // queue the next accept (keep the server alive)
-      queue_accept(ctx, socket);
-    }
-    else
-    {
-      if (connection_state::should_stop)
-        cr::out().warn("closing server (waiting for pending connections to close)");
-      else
-        cr::out().warn("accept failed");
-    }
-  });
 }
 
 int main(int argc, char** argv)
@@ -234,29 +197,18 @@ int main(int argc, char** argv)
 
   {
     // create a task manager:
-    threading::task_manager tm;
+    tm_helper_t tmh;
     std::deque<std::thread> thr;
     if (gbl_opt.multithreaded)
     {
-      {
-        // very simple group data:
-        neam::threading::task_group_dependency_tree tgd;
-        tgd.add_task_group("io"_rid, "io");
-        tm.add_compiled_frame_operations(tgd.compile_tree());
-      }
-      // spawn some worker thread:
-      for (unsigned i = 0; i < k_thread_count /*thread count*/; ++i)
-      {
-        thr.emplace_back([&tm]
-        {
-          while (!connection_state::should_stop)
-          {
-            tm.wait_for_a_task();
-            tm.run_a_task();
-          }
-        });
-      }
+      // very simple group data:
+      neam::threading::task_group_dependency_tree tgd;
+      tgd.add_task_group("io"_rid);
+      tmh.setup(k_thread_count, std::move(tgd));
     }
+
+    // We need it to be destructed after io::context (in the case of the single-threaded version)
+    std::optional<io::network::base_server<connection_state>> bs;
 
     io::context ctx;
 
@@ -266,29 +218,30 @@ int main(int argc, char** argv)
       // note: this may not be a very good idea, as without the 50us sleep the multi-threaded version is at best as fast as the single-threaded one
       //       (overheads of very very small tasks)
       //       The better way to do mt io is a case-by-case (only for long processing of stuff).
-      ctx.force_deferred_execution(&tm, threading::k_non_transient_task_group);
+      ctx.force_deferred_execution(&tmh.tm, threading::k_non_transient_task_group);
 //       ctx.force_deferred_execution(&tm, tm.get_group_id("io"_rid));
     }
 
-    const neam::id_t socket = ctx.create_listening_socket(port);
+    bs.emplace(ctx);
+    const neam::id_t socket = ctx.create_listening_socket(port, ctx.ipv4(0, 0, 0, 0));
+    bs->set_socket(socket);
+    bs->async_accept();
     cr::out().log("listening on port {}", ctx.get_socket_port(socket));
 
-    queue_accept(ctx, socket);
 
     if (gbl_opt.multithreaded)
     {
       // setup the io/thread stuff:
-      tm.set_start_task_group_callback(tm.get_group_id("io"_rid), [&]
+      tmh.tm.set_start_task_group_callback(tmh.tm.get_group_id("io"_rid), [&]
       {
         // launch a task to allow the io group to be used for other purposes
         // (if we put our deferred tasks in the io group, this allows to start working on them while
         //  the processing of io is done)
-        tm.get_task([&]
+        tmh.tm.get_task([&]
         {
           ctx.process();
-          ctx.process_completed_queries();
 
-          if (!tm.has_pending_tasks() && !ctx.has_pending_operations())
+          if (!tmh.tm.has_pending_tasks() && !ctx.has_pending_operations())
           {
             // where in a game engine we would simply ignore this, we don't want to consume 100% of the cpu waiting for stuff
             // so we instead decide to stall a bit
@@ -297,23 +250,23 @@ int main(int argc, char** argv)
 
             std::this_thread::sleep_for(std::chrono::microseconds(500));
           }
+
+          // The stopping condition:
+          //  - all sockets must be closed
+          //  - io::context doesn't have any:
+          //    - non-queued operations
+          //    - in-flight operations
+          // Because we configured io::context to queue tasks for all io operations,
+          // if there's any remaining operation, it destructor will queue and wait for them,
+          // launching tasks that have no chance of running, which will trigger an assert
+          if (!bs->is_socket_valid() && !bs->has_any_connections() && !ctx.has_pending_operations() && !ctx.has_in_flight_operations())
+            tmh.request_stop();
         });
       });
 
-      // do some work:
-      // (the main thread continues untill every thask has been run to avoid an assert)
-      while (!connection_state::should_stop || tm.has_pending_tasks())
-      {
-        tm.wait_for_a_task();
-        tm.run_a_task();
-      }
+      tmh.enroll_main_thread();
 
-      // wait for the threads to endL
-      for (auto& it : thr)
-      {
-        if (it.joinable())
-          it.join();
-      }
+      tmh.join_all_threads();
     }
 
     // the context will process all pending stuff while trying to run its destructor, so we're kept alive untill the socket close

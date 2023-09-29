@@ -10,8 +10,8 @@
 #include "../logger/logger.hpp"
 #include "../chrono.hpp"
 
-constexpr size_t frame_count = 1000000;
-constexpr size_t thread_count = 8;
+constexpr size_t frame_count = 10000;
+constexpr size_t thread_count = 6;
 
 
 using namespace neam;
@@ -100,9 +100,9 @@ int main(int, char**)
   threading::task_manager tm;
   {
     neam::threading::task_group_dependency_tree tgd;
-    tgd.add_task_group("init-group"_rid, "init-group");
-    tgd.add_task_group("async-group"_rid, "async-group");
-    tgd.add_task_group("for_each-group"_rid, "for_each-group");
+    tgd.add_task_group("init-group"_rid);
+    tgd.add_task_group("async-group"_rid);
+    tgd.add_task_group("for_each-group"_rid);
 
     // async and for_each bot depend on init
     // It will generate something like:
@@ -117,12 +117,13 @@ int main(int, char**)
     auto tree = tgd.compile_tree();
     tree.print_debug();
 
-    tm.add_compiled_frame_operations(std::move(tree));
+    tm.add_compiled_frame_operations(std::move(tree), {});
   }
 
   unsigned frame_index = 0;
 
   // spawn threads:
+  neam::cr::out().log("Spawning {} threads...", thread_count);
   std::deque<std::thread> thr;
   for (unsigned i = 0; i < thread_count; ++i)
   {
@@ -136,6 +137,8 @@ int main(int, char**)
       }
     });
   }
+
+  neam::cr::out().log("Setting up task manager...");
 
   // add some setup:
   cr::chrono chr;
@@ -180,17 +183,17 @@ int main(int, char**)
 
       // launch tasks for the allocation/init as it can be quite slow
       {
-        threading::task& init_a = *tm.get_task([&]
+        auto init_a = tm.get_task([&]
         {
           src_array.resize(300);
-        });
-        threading::task& init_b = *tm.get_task([&]
+        }).create_completion_marker();
+        auto init_b = tm.get_task([&]
         {
           out_data.resize(32 * 1024);
-        });
+        }).create_completion_marker();
 
-        tm.actively_wait_for(init_a);
-        tm.actively_wait_for(init_b);
+        tm.actively_wait_for(std::move(init_a));
+        tm.actively_wait_for(std::move(init_b));
       }
 
       // init the array:
@@ -226,6 +229,11 @@ int main(int, char**)
     recurse(tm, { 0 }, false);
   });
 
+  neam::cr::out().log("Enrolling main thread");
+
+  // "Spin" the task manager
+  tm._advance_state();
+
   // run everything...
   for (size_t i = 0; frame_index < frame_count; ++i)
   {
@@ -233,12 +241,27 @@ int main(int, char**)
     tm.run_a_task();
   }
 
-  // wait for the threads to endL
+  // wait for the threads to end
+  neam::cr::out().log("Waiting for threads...");
   for (auto& it : thr)
   {
     if (it.joinable())
       it.join();
   }
+
+  // properly end the task manager:
+  // (destructing it while there's pending tasks or when not in a frame boundary is incorrect)
+  // tm.request_stop is called while the whole task manager is stalled at a frame boundary.
+  // Not unlocking the task manager in the request_stop callback would require to call _advance_state to get operations back to normal
+  // We should also run the remaning long duration taks, if there's any.
+  //
+  // NOTE: In this sample, we exit the threads before performing the stall, but that's not always possible. (a thread can be stuck in wait_for_a_task).
+  //       To unstuck the thread:  tm.should_threads_exit_wait(true); (It only works when the task manager is stalled)
+  bool exit_loop = false;
+  tm.request_stop([&] { exit_loop = true; }, true);
+  while (!exit_loop)
+    tm.run_a_task();
+  tm.get_frame_lock()._unlock();
 
   return 0;
 }

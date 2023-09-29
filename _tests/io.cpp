@@ -93,11 +93,11 @@ int main(int argc, char**argv)
       unsigned i = 0;
       file_2_queue_write = [&]
       {
-        if (i++ >= k_entry_count) return io::context::write_chain::create_and_complete(true);
+        if (i++ >= k_entry_count) return io::context::write_chain::create_and_complete({}, true, 0);
 
         std::string some_data("more and more data!\n");
         return ctx.queue_write(file_2, io::context::append, raw_data::allocate_from(some_data))
-        .then([&](bool)
+        .then([&](raw_data&& /*data*/, bool /*success*/, size_t /*write_size*/)
         {
           // follow-up with the next write:
           return file_2_queue_write();
@@ -106,7 +106,7 @@ int main(int argc, char**argv)
 
       // queue all the write operations
       file_2_queue_write()
-      .then([&](bool)
+      .then([&](raw_data&& /*data*/, bool /*success*/, size_t /*write_size*/)
       {
         // last write:
         ctx.queue_write(file_2, io::context::append, raw_data::allocate_from(std::string("[last operation !]\n")));
@@ -118,11 +118,11 @@ int main(int argc, char**argv)
 
     // file_3: do one big read/write op
     ctx.queue_read(file_1, 0, io::context::whole_file)
-    .then([=, &ctx](raw_data&& data, bool /*success*/)
+    .then([=, &ctx](raw_data&& data, bool /*success*/, uint32_t)
     {
       return ctx.queue_write(file_3, io::context::truncate, std::move(data));
     })
-    .then([&](bool) // instead of nesting async which is recursive and ugly,
+    .then([&](raw_data&& /*data*/, bool /*success*/, size_t /*write_size*/) // instead of nesting async which is recursive and ugly,
                    // returning a chain flattens the calls
     {
       // file_3 contains all of file_1 data
@@ -155,10 +155,10 @@ int main(int argc, char**argv)
 
         // queue a follow-up read if there's still data to read:
         if (current_offset >= file_2_size)
-          return io::context::read_chain::create_and_complete({/* no data */}, true); // done !
+          return io::context::read_chain::create_and_complete({/* no data */}, true, 0); // done !
 
         io::context::read_chain ret = ctx.queue_read(file_2, current_offset, k_chunk_size)
-        .then([&, read_offset = current_offset](raw_data&& data, bool /*success*/)
+        .then([&, read_offset = current_offset](raw_data&& data, bool /*success*/, uint32_t)
         {
           // not a recursive call, as it is flattened by the async_chain and _wait_for_submit_queries
           return file_4_queue_write_read(std::move(data), read_offset);
@@ -176,7 +176,7 @@ int main(int argc, char**argv)
       for (unsigned i = 0; i < k_chunk_to_read; ++i)
       {
         io::context::read_chain chain = ctx.queue_read(file_2, current_offset, k_chunk_size)
-          .then([&, read_offset = current_offset](raw_data&& data, bool /*success*/)
+          .then([&, read_offset = current_offset](raw_data&& data, bool /*success*/, uint32_t)
           {
             return file_4_queue_write_read(std::move(data), read_offset);
           });
