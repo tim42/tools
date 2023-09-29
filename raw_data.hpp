@@ -83,6 +83,12 @@ namespace neam
       return ret;
     }
 
+    template<typename T>
+    [[nodiscard]] static raw_data duplicate(const T& stdlayout_data) requires(std::is_standard_layout_v<T>)
+    {
+      return duplicate(&stdlayout_data, sizeof(stdlayout_data));
+    }
+
     [[nodiscard]] static bool is_same(const raw_data& a, const raw_data& b)
     {
       if (&a == &b) return true;

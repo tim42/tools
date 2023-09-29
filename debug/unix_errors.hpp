@@ -59,23 +59,34 @@ namespace neam
 
         static const char* get_code_name(long code)
         {
-          if (code == -1)
+#if defined(__USE_GNU) && __USE_GNU
+          if (code == -1 && errno > 0)
+            return strerrorname_np(errno);
+          else if (code <= -1)
+            return strerrorname_np(-code);
+#else
+          if (code == -1 && errno > 0)
             return "error";
-          else if (code < -1)
+          else if (code <= -1)
             return "error/code";
-          else if (!code)
-            return "success";
-          return "success?";
+#endif
+          return "success";
         }
 
         static const char* get_description(long code)
         {
-          if (code == -1)
+#if defined(__USE_GNU) && __USE_GNU
+          if (code == -1 && errno > 0)
             return strerror(errno);
-          else if (code < -1)
+          else if (code <= -1)
             return strerror(-code);
-          else
-            return "success";
+#else
+          if (code == -1 && errno > 0)
+            return strerror(errno);
+          else if (code <= -1)
+            return strerror(-code);
+#endif
+          return "success";
         }
       };
     } // namespace errors

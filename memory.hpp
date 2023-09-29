@@ -38,9 +38,9 @@ namespace neam::memory
   /// \return nullptr if the allocation failed
   ///
   /// \note pages allocated this way cannot hold executable code
-  void* allocate_page(uint32_t page_count = 1);
+  void* allocate_page(uint32_t page_count = 1, bool use_pool = true);
 
   /// \brief Returns a page to the OS.
   /// \note pointer must be page aligned.
-  void free_page(void* page_ptr, uint32_t page_count);
+  void free_page(void* page_ptr, uint32_t page_count, bool use_pool = true);
 }

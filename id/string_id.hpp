@@ -170,6 +170,11 @@ namespace neam
         return string_id((id_t)ct::hash::fnv1a_continue<64>((uint64_t)prev, _str, len));
       };
 
+      constexpr static string_id _from_id_t(id_t id)
+      {
+        return { id };
+      }
+
     private:
       constexpr string_id(id_t rid) : id(rid)
       {

@@ -42,7 +42,7 @@
 namespace neam::rle
 {
   // FIXME: a forward decl header:
-  template<typename T> static T deserialize(const raw_data& data, status* opt_st = nullptr);
+  template<typename T> static T deserialize(const raw_data& data, status* opt_st = nullptr, uint64_t offset = 0);
   template<typename T> static raw_data serialize(const T& v, status* opt_st = nullptr);
 
   using type_hash_t = uint64_t;

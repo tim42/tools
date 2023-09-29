@@ -108,6 +108,11 @@ namespace neam::cr
         return ret;
       }
 
+      constexpr void _drop()
+      {
+        ptr = nullptr;
+      }
+
       constexpr void swap(raw_ptr&& o)
       {
         std::swap(ptr, o.ptr);
@@ -120,11 +125,13 @@ namespace neam::cr
 
       constexpr std::add_lvalue_reference_t<std::remove_pointer_t<pointer>> operator*() const
       {
+        assert_not_empty("operator *");
         return *ptr;
       }
 
       constexpr pointer operator->() const
       {
+        assert_not_empty("operator ->");
         return ptr;
       }
 
@@ -144,6 +151,10 @@ namespace neam::cr
       void assert_empty() const
       {
         check::debug::n_assert(ptr == nullptr, "raw_ptr<{}> still contains a pointer at destruction", ct::type_name<Type>.view());
+      }
+      void assert_not_empty(std::string_view op) const
+      {
+        check::debug::n_assert(ptr != nullptr, "raw_ptr<{}> does not contains a pointer for this operation: {}", ct::type_name<Type>.view(), op);
       }
 
     private:

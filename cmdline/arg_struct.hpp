@@ -31,6 +31,7 @@
 #include "../logger/logger.hpp"
 #include "../type_id.hpp"
 #include "../ct_list.hpp"
+#include "../container_utils.hpp"
 
 #include "../struct_metadata/struct_metadata.hpp"
 

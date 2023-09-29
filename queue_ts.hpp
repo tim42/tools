@@ -40,7 +40,7 @@ namespace neam::cr
   struct queue_ts_wrapper
   {
     static constexpr bool k_need_preinit = true;
-    static constexpr bool k_need_destruct = std::is_trivially_destructible_v<InnerType>;
+    static constexpr bool k_need_destruct = !std::is_trivially_destructible_v<InnerType>;
     using type_t = InnerType;
 
     static void preinit(queue_ts_wrapper* uninit_memory)
@@ -81,7 +81,7 @@ namespace neam::cr
     // static_assert(std::is_scalar_v<InnerType>, "queue_ts_atomic_wrapper only support scalar types");
     static_assert(std::atomic<InnerType>::is_always_lock_free, "queue_ts_atomic_wrapper only support types which are always lock free");
     static constexpr bool k_need_preinit = (InvalidValue) != 0;
-    static constexpr bool k_need_destruct = std::is_trivially_destructible_v<InnerType>;
+    static constexpr bool k_need_destruct = !std::is_trivially_destructible_v<InnerType>;
     using type_t = InnerType;
 
     static void preinit(queue_ts_atomic_wrapper* uninit_memory)

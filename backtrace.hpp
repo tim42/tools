@@ -97,7 +97,7 @@ namespace neam
           realname = mangled;
 
         // print
-        logger.warn("  [{}]: {}\t{}", num - j, realname, strings[j]);
+        logger.warn("  [{:3}]: {}\t{}", num - j, realname, strings[j]);
 
         // and free
         free(mangled);

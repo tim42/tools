@@ -47,15 +47,17 @@ namespace neam
     class memory_pool
     {
       public:
+        using object_ptr = ObjectType*;
+
         // construct an allocated object
         template<typename... Args>
-        ObjectType *construct(ObjectType *p, Args &&... args)
+        ObjectType* construct(ObjectType* p, Args&& ... args)
         {
           new (p) ObjectType (std::forward<Args>(args)...);
           return p;
         }
 
-        void destroy(ObjectType *p)
+        void destruct(ObjectType *p)
         {
           p->~ObjectType();
         }
@@ -92,6 +94,37 @@ namespace neam
         UnderlyingPool pool {sizeof(ObjectType), alignof(ObjectType), PageCount};
     };
 
+    namespace internal
+    {
+      template<typename PoolType>
+      struct auto_object_pool
+      {
+        static PoolType& get_pool()
+        {
+          static PoolType pool;
+          return pool;
+        }
+      };
+
+      template<typename PoolType>
+      struct auto_object_pool_deleter
+      {
+        void operator()(typename PoolType::object_ptr ptr) const
+        {
+          auto& pool = auto_object_pool<PoolType>::get_pool();
+          pool.destruct(ptr);
+          pool.deallocate(ptr);
+        }
+      };
+    }
+    template<typename T>
+    using auto_pooled_ptr = std::unique_ptr<T, internal::auto_object_pool_deleter<memory_pool<T>>>;
+    template<typename T, typename... Args>
+    static auto_pooled_ptr<T> make_pooled_ptr(Args&&... args)
+    {
+      T* const ptr = new (internal::auto_object_pool<memory_pool<T>>::get_pool().allocate()) T (std::forward<Args>(args)...);
+      return auto_pooled_ptr<T>{ ptr };
+    }
   } // namespace cr
 } // namespace neam
 

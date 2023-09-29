@@ -78,7 +78,7 @@ namespace neam::cr
     }, t);
   }
 
-  static std::vector<std::string> split_string(const std::string& input, const std::string& regex)
+  [[maybe_unused]] static std::vector<std::string> split_string(const std::string& input, const std::string& regex)
   {
     // passing -1 as the submatch index parameter performs splitting
     std::regex re(regex);

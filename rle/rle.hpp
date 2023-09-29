@@ -27,7 +27,7 @@
 #pragma once
 
 #ifndef N_RLE_VERBOSE_FAILS
-  #define N_RLE_VERBOSE_FAILS 0
+  #define N_RLE_VERBOSE_FAILS 1
 #endif
 
 #if N_RLE_VERBOSE_FAILS
@@ -67,13 +67,14 @@ namespace neam::rle
 
   /// \brief Deserialize. Returns a default constructed object if it failed.
   template<typename T>
-  static T deserialize(const raw_data& data, status* opt_st/* = nullptr*/)
+  static T deserialize(const raw_data& data, status* opt_st/* = nullptr*/, uint64_t offset /*= 0*/)
   {
     status st;
     if (opt_st == nullptr)
       opt_st = &st;
     *opt_st = status::success;
     decoder dc = data;
+    dc.skip(offset);
     return coder<T>::decode(dc, *opt_st);
   }
 

@@ -120,6 +120,7 @@ namespace neam::sys
     sigaction(SIGSEGV, &s, nullptr);
     sigaction(SIGFPE, &s, nullptr);
     sigaction(SIGABRT, &s, nullptr);
+    sigaction(SIGILL, &s, nullptr);
 #endif
   }
 
@@ -133,7 +134,10 @@ namespace neam::sys
     sigaction(SIGSEGV, &s, nullptr);
     sigaction(SIGFPE, &s, nullptr);
     sigaction(SIGABRT, &s, nullptr);
+    sigaction(SIGILL, &s, nullptr);
 #endif
   }
 }
+
+//  gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop --method org.freedesktop.portal.FileChooser.OpenFile "" caca []
 
