@@ -322,6 +322,8 @@ namespace neam::io
   context::read_chain context::queue_receive(id_t fid, size_t size, raw_data&& data, uint32_t offset_in_data)
   {
     check::debug::n_assert(size > 0, "Receives of size 0 are invalid");
+    if (size == everything && data.data)
+      size = data.size - offset_in_data;
     if (data.data)
     {
       check::debug::n_assert(!!data.data, "Invalid data");
@@ -349,6 +351,8 @@ namespace neam::io
   context::read_chain context::queue_full_receive(id_t fid, size_t size, raw_data&& data, uint32_t offset_in_data)
   {
     check::debug::n_assert(size > 0, "Receives of size 0 are invalid");
+    check::debug::n_assert(size != everything, "Full receive of `everything` are not possible. Please provide a valid size or use the non-full receive");
+
     if (data.data)
     {
       check::debug::n_assert(data.size > offset_in_data, "Invalid data / offset provided (data size: {}, offset: {})", data.size, offset_in_data);
@@ -393,7 +397,7 @@ namespace neam::io
   {
     check::debug::n_assert(!!data.data, "Invalid data");
     check::debug::n_assert(data.size > offset_in_data, "Invalid data / offset provided (data size: {}, offset: {})", data.size, offset_in_data);
-    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid receive operation");
+    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid send operation");
     if (size == 0)
       size = data.size - offset_in_data;
     size = std::min((size_t)data.size - offset_in_data, size);
@@ -416,7 +420,7 @@ namespace neam::io
   {
     check::debug::n_assert(!!data.data, "Invalid data");
     check::debug::n_assert(data.size > offset_in_data, "Invalid data / offset provided (data size: {}, offset: {})", data.size, offset_in_data);
-    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid receive operation");
+    check::debug::n_check(fid != id_t::none && fid != id_t::invalid, "Invalid full-send operation");
     if (size == 0)
       size = data.size - offset_in_data;
     size = std::min((size_t)data.size - offset_in_data, size);
@@ -676,7 +680,7 @@ namespace neam::io
         break;
     }
     if (count > 0)
-      cr::out().debug("_wait_for_submit_queries: processed a total of {} queries", count);
+      cr::out().debug("_wait_for_submit_queries: processed a total of {} loop", count);
   }
 
   void context::_wait_for_queries()
@@ -788,27 +792,31 @@ namespace neam::io
   }
 
 
-  io_uring_sqe* context::get_sqe(bool should_process)
+  io_uring_sqe* context::get_sqe()
   {
+    // check if we have an already "returned" sqe
+    if (returned_sqe != nullptr)
+    {
+      io_uring_sqe* const sqe = returned_sqe;
+      returned_sqe = nullptr;
+      return sqe;
+    }
+
     io_uring_sqe* const sqe = io_uring_get_sqe(&ring);
     if (sqe == nullptr)
     {
-      // FIXME:
-//      if (!should_process)
-      {
-        // (still) no space in queue, cannot do anything.
-        neam::cr::out().debug("io::context::get_sqe: submit queue is full");
-        return nullptr;
-      }
-//       else
-//       {
-//         // we have done stuff, process that and try again
-//         process_completed_queries();
-//         return get_sqe(false);
-//       }
+      // no space in queue, cannot do anything.
+      neam::cr::out().debug("io::context::get_sqe: submit queue is full");
     }
     return sqe;
   }
+
+  void context::return_sqe(io_uring_sqe* sqe)
+  {
+    check::debug::n_assert(returned_sqe == nullptr, "io::context: return sqe: a sqe has already been returned.");
+    returned_sqe = sqe;
+  }
+
 
   int context::open_file(id_t fid, bool read, bool write, bool truncate, bool force_truncate, bool& try_again)
   {
@@ -941,7 +949,7 @@ namespace neam::io
     const bool is_notif = (cqe->flags & IORING_CQE_F_NOTIF) == IORING_CQE_F_NOTIF;
     const bool is_using_buffer = (cqe->flags & IORING_CQE_F_BUFFER) == IORING_CQE_F_BUFFER;
     const uint16_t buffer_idx = is_using_buffer ? (uint32_t)(cqe->flags) >> 16 : 0;
-#if 0
+#if 0 /* DEBUG */
     if (data)
       cr::out().debug("completed_queries: {} / {}: has-more: {}, notif: {}, buffer: {} [{}]", get_query_type_str(data->type), (void*)data, multishot_has_more, is_notif, is_using_buffer, buffer_idx);
     else
@@ -1003,17 +1011,14 @@ namespace neam::io
   bool context::queue_close_operations_fd()
   {
     std::lock_guard _fdl(fd_lock);
-
-    bool has_done_any_delete = false;
     while (fd_to_be_closed.size() > 0)
     {
       const int fd = *fd_to_be_closed.begin();
       // Get a SQE
-      io_uring_sqe* const sqe = get_sqe(has_done_any_delete);
+      io_uring_sqe* sqe = get_sqe();
       if (!sqe)
         return false;
 
-      has_done_any_delete = true;
       fd_to_be_closed.erase(fd_to_be_closed.begin());
 
       io_uring_prep_close(sqe, fd);
@@ -1047,7 +1052,7 @@ namespace neam::io
       cancel_request rq = to_be_canceled.front();
 
       // Get a SQE
-      io_uring_sqe* const sqe = get_sqe(true);
+      io_uring_sqe* const sqe = get_sqe();
       if (!sqe)
         return;
 
@@ -1085,8 +1090,6 @@ namespace neam::io
         return std::to_underlying(a.fid) < std::to_underlying(b.fid);
       });
 
-      bool has_done_any_read = false;
-
       while (requests.size() > 0)
       {
         if (requests.front().state.is_canceled())
@@ -1115,10 +1118,9 @@ namespace neam::io
         }
 
         // Get a SQE
-        io_uring_sqe* const sqe = get_sqe(has_done_any_read);
+        io_uring_sqe* const sqe = get_sqe();
         if (!sqe)
           break;
-        has_done_any_read = true;
 
         // Count the queries for the same file w/ contiguous queries:
         unsigned iovec_count = 1;
@@ -1201,8 +1203,6 @@ namespace neam::io
         return std::to_underlying(a.fid) < std::to_underlying(b.fid);
       });
 
-      bool has_done_any_writes = false;
-
       while (requests.size() > 0)
       {
         if (requests.front().state.is_canceled())
@@ -1231,11 +1231,9 @@ namespace neam::io
         }
 
         // Get a SQE
-        io_uring_sqe* const sqe = get_sqe(has_done_any_writes);
+        io_uring_sqe* const sqe = get_sqe();
         if (!sqe)
           break;
-
-        has_done_any_writes = true;
 
         // Count the queries for the same file w/ contiguous queries:
         unsigned iovec_count = 1;
@@ -1308,29 +1306,22 @@ namespace neam::io
 
   void context::queue_accept_operations()
   {
-    if (accept_requests.requests.empty())
-      return;
-
-    bool has_done_any_accepts = false;
-
-    accept_request rq;
-    while (accept_requests.requests.try_pop_front(rq))
+    while (!accept_requests.requests.empty())
     {
-      if (rq.state.is_canceled())
+      // Get a SQE
+      io_uring_sqe* const sqe = get_sqe();
+      if (!sqe)
+        break;
+
+      accept_request rq;
+      if (!accept_requests.requests.try_pop_front(rq) || rq.state.is_canceled())
+      {
+        return_sqe(sqe);
         continue;
+      }
 
       const id_t fid = rq.fid;
       const int fd = rq.sock_fd;
-
-      // Get a SQE
-      io_uring_sqe* const sqe = get_sqe(has_done_any_accepts);
-      if (!sqe)
-      {
-        accept_requests.add_request(std::move(rq));
-        break;
-      }
-
-      has_done_any_accepts = true;
 
       // Allocate + fill the query structure:
       query* q = query::allocate(fid, query::type_t::accept, 0);
@@ -1359,100 +1350,78 @@ namespace neam::io
 
   void context::queue_connect_operations()
   {
-    std::vector<connect_chain::state> failed_states;
-
+    while (!connect_requests.requests.empty())
     {
-      if (connect_requests.requests.empty())
-        return;
-      //cr::out().debug("queue_writev_operations: {} pending write operations", pending_writes.size());
-
-      bool has_done_any_connects = false;
+      // Get a SQE
+      io_uring_sqe* const sqe = get_sqe();
+      if (!sqe)
+        break;
 
       connect_request rq;
-      while (connect_requests.requests.try_pop_front(rq) > 0)
+      if (!connect_requests.requests.try_pop_front(rq) || rq.state.is_canceled())
       {
-        if (rq.state.is_canceled())
-          continue;
-
-        const id_t fid = rq.fid;
-        const int fd = rq.sock_fd;
-
-        addrinfo* result;
-        const auto port_str = fmt::format("{}", rq.port);
-        if (check::unx::n_check_success(getaddrinfo(rq.addr.c_str(), port_str.c_str(), nullptr, &result)) < 0)
-        {
-          failed_states.push_back(std::move(rq.state));
-          continue;
-        }
-
-        // Get a SQE
-        io_uring_sqe* const sqe = get_sqe(has_done_any_connects);
-        if (!sqe)
-        {
-          freeaddrinfo(result);
-          connect_requests.add_request(std::move(rq));
-          break;
-        }
-
-        has_done_any_connects = true;
-
-        // Allocate + fill the query structure:
-        query* q = query::allocate(fid, query::type_t::connect, 0);
-
-        *(q->connect_state) = std::move(rq.state);
-
-        io_uring_prep_connect(sqe, fd, result->ai_addr, result->ai_addrlen);
-
-        // add the append flags if necessary
-        io_uring_sqe_set_data(sqe, q);
-
-        check::unx::n_check_success(io_uring_submit(&ring));
-        ++connect_requests.in_flight;
-
-        freeaddrinfo(result);
-
-        q->connect_state->on_cancel([q, this]
-        {
-          cancel_operation(*q);
-        });
+        return_sqe(sqe);
+        continue;
       }
-    } // lock scope
 
-    // complete the failed states outside the readlock so that they can queue read operations
-    for (auto& state : failed_states)
-    {
-      state.complete(false);
+      const id_t fid = rq.fid;
+      const int fd = rq.sock_fd;
+
+      addrinfo* result;
+      const auto port_str = fmt::format("{}", rq.port);
+      if (check::unx::n_check_success(getaddrinfo(rq.addr.c_str(), port_str.c_str(), nullptr, &result)) < 0)
+      {
+        rq.state.complete(false);
+        return_sqe(sqe);
+        continue;
+      }
+
+      // Allocate + fill the query structure:
+      query* q = query::allocate(fid, query::type_t::connect, 0);
+
+      *(q->connect_state) = std::move(rq.state);
+
+      io_uring_prep_connect(sqe, fd, result->ai_addr, result->ai_addrlen);
+
+      // add the append flags if necessary
+      io_uring_sqe_set_data(sqe, q);
+
+      check::unx::n_check_success(io_uring_submit(&ring));
+      ++connect_requests.in_flight;
+
+      freeaddrinfo(result);
+
+      q->connect_state->on_cancel([q, this]
+      {
+        cancel_operation(*q);
+      });
     }
   }
 
   void context::queue_recv_operations()
   {
-    if (recv_requests.requests.empty())
-      return;
+    // Allocate the buffers here, as we may (or may not) have a connection that require preallocated buffers
+    if (!recv_requests.requests.empty())
+      allocate_buffers_for_multi_ops();
 
-    bool has_done_any_rq = false;
-
-    recv_request rq;
-    while (recv_requests.requests.try_pop_front(rq))
+    while (!recv_requests.requests.empty())
     {
-      if (rq.state.is_canceled())
+      // Get a SQE
+      io_uring_sqe* const sqe = get_sqe();
+      if (!sqe)
+        break;
+
+      recv_request rq;
+      if (!recv_requests.requests.try_pop_front(rq) || rq.state.is_canceled())
+      {
+        return_sqe(sqe);
         continue;
+      }
 
       const id_t fid = rq.fid;
       const int fd = rq.sock_fd;
 
-      if (rq.multishot)
-        allocate_buffers_for_multi_ops();
-
-      // Get a SQE
-      io_uring_sqe* const sqe = get_sqe(has_done_any_rq);
-      if (!sqe)
-      {
-        recv_requests.add_request(std::move(rq));
-        break;
-      }
-
-      has_done_any_rq = true;
+      const bool is_using_prealloc_buffer = (rq.multishot || (!rq.data.data && (!rq.wait_all && rq.size_to_recv == everything)));
 
       // Allocate + fill the query structure:
       query* q = query::allocate(fid, query::type_t::recv, 1);
@@ -1461,20 +1430,19 @@ namespace neam::io
 
       q->multishot = rq.multishot;
 
-      if (!rq.multishot)
+      if (!is_using_prealloc_buffer)
       {
         if (!rq.data.data)
         {
           rq.data = raw_data::allocate(rq.size_to_recv);
           rq.offset_in_data = 0;
+          memset(rq.data.get(), 0, rq.size_to_recv); // so valgrind is happy, can be skipped
         }
         *(q->get_data_offset_for_iovec(0)) = rq.offset_in_data;
         *(q->get_data_size_for_iovec(0)) = rq.data.size;
 
         q->iovecs[0].iov_len = rq.size_to_recv;
         q->iovecs[0].iov_base = (uint8_t*)rq.data.data.release() + rq.offset_in_data;
-
-        memset(q->iovecs[0].iov_base, 0, q->iovecs[0].iov_len); // so valgrind is happy, can be skipped
       }
       else
       {
@@ -1483,14 +1451,13 @@ namespace neam::io
       }
 
       if (rq.multishot)
-      {
         io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, 0);
-        io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
-      }
       else
-      {
         io_uring_prep_recv(sqe, fd, q->iovecs[0].iov_base, q->iovecs[0].iov_len, rq.wait_all ? MSG_WAITALL : 0);
-      }
+
+      cr::out().debug("queue_recv: multishot: {}, wait-all: {}, use-prealloc-buffers: {}", rq.multishot, rq.wait_all, is_using_prealloc_buffer);
+      if (is_using_prealloc_buffer)
+        io_uring_sqe_set_flags(sqe, IOSQE_BUFFER_SELECT);
 
       io_uring_sqe_set_data(sqe, q);
 
@@ -1506,29 +1473,22 @@ namespace neam::io
 
   void context::queue_send_operations()
   {
-    if (send_requests.requests.empty())
-      return;
-
-    bool has_done_any_rq = false;
-
-    send_request rq;
-    while (send_requests.requests.try_pop_front(rq))
+    while (!send_requests.requests.empty())
     {
-      if (rq.state.is_canceled())
+      // Get a SQE
+      io_uring_sqe* const sqe = get_sqe();
+      if (!sqe)
+        break;
+
+      send_request rq;
+      if (!send_requests.requests.try_pop_front(rq) || rq.state.is_canceled())
+      {
+        return_sqe(sqe);
         continue;
+      }
 
       const id_t fid = rq.fid;
       const int fd = rq.sock_fd;
-
-      // Get a SQE
-      io_uring_sqe* const sqe = get_sqe(has_done_any_rq);
-      if (!sqe)
-      {
-        send_requests.add_request(std::move(rq));
-        break;
-      }
-
-      has_done_any_rq = true;
 
       // Allocate + fill the query structure:
       query* q = query::allocate(fid, query::type_t::send, 1);
@@ -1701,7 +1661,7 @@ namespace neam::io
       cr::out().debug("io::context: allocating {} buffers of {}Mib...", k_prealloc_buffer_count - buffer_count, k_prealloc_buffer_size / 1024 / 1024);
       while (buffer_count < k_prealloc_buffer_count)
       {
-        io_uring_sqe* sqe = get_sqe(false);
+        io_uring_sqe* sqe = get_sqe();
         if (!sqe)
           return; // might be bad
         prealloc_multi_buffers[buffer_count] = raw_data::allocate(k_prealloc_buffer_size);
@@ -1721,7 +1681,7 @@ namespace neam::io
         if (prealloc_multi_buffers[i].data)
           continue;
 
-        io_uring_sqe* sqe = get_sqe(false);
+        io_uring_sqe* sqe = get_sqe();
         if (!sqe)
           return; // might be bad
         prealloc_multi_buffers[i] = raw_data::allocate(k_prealloc_buffer_size);

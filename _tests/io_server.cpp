@@ -45,11 +45,21 @@ void broadcast(io::network::base_server_interface& server_base, std::string&& li
 // Connection state data. Held alive while a connection is alive.
 struct connection_state : public io::network::ring_buffer_connection_t<connection_state>
 {
+  cr::event_token_t on_close_tk;
+
   void on_connection_setup()
   {
     cr::out().warn("[{}]: new connection (connection count: {})", socket, server_base->get_connection_count() + 1);
     queue_full_send(raw_data::allocate_from(std::string("[hello. To close the connection: /close, to quit the server: /quit or /force-quit]\n")));
-    broadcast(*server_base, fmt::format("[{} has entered the chat]", socket));
+    broadcast(*server_base, fmt::format("[{} has entered the chat]\n", socket));
+
+    on_close_tk = on_close.add([this, old_socket = socket]
+    {
+      cr::out().warn("[{}]: connection closed", old_socket);
+      broadcast(*server_base, fmt::format("[{} has left the chat]\n", old_socket));
+      ioctx->cancel_all_pending_operations_for(ioctx->stdin());
+      on_close_tk.release();
+    });
   }
 
   void on_buffer_full()

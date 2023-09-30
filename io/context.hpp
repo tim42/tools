@@ -66,7 +66,7 @@ namespace neam::io
       static constexpr uint8_t k_max_cycle_to_close = 6;
       static constexpr size_t k_max_open_file_count = 384;
 
-      // Necessary for queue_multi_receive. Only allocated on the first multi-receive process.
+      // Necessary for queue_multi_receive. Only allocated on the first receive process.
       static constexpr size_t k_prealloc_buffer_count = 8;
       static constexpr size_t k_prealloc_buffer_size = 6 * 1024 * 1024;
 
@@ -77,6 +77,7 @@ namespace neam::io
       using accept_chain = async::chain<id_t /* connection id (or invalid)*/>;
 
       static constexpr size_t whole_file = ~uint64_t(0);
+      static constexpr size_t everything = whole_file;
       static constexpr size_t append = ~uint64_t(0); // for writes only, indicate we want to append
       static constexpr size_t truncate = append - 1; // for writes only, indicate we want to truncate
 
@@ -313,7 +314,8 @@ namespace neam::io
       /// \brief Force a close operation on all the fd (sockets and files)
       void force_close_all_fd(bool include_sockets = false);
 
-      /// \brief Close a socket. No further operation can be done on it.
+      /// \brief Close a fid. No further operation can be done on it.
+      /// \note On sockets, this implies a shutdown call
       void close(id_t fid);
       void _unlocked_close(id_t fid);
 
@@ -583,7 +585,8 @@ namespace neam::io
       static_assert(alignof(file_descriptor) == alignof(id_t));
 
     private: // functions:
-      io_uring_sqe* get_sqe(bool should_process);
+      io_uring_sqe* get_sqe();
+      void return_sqe(io_uring_sqe* sqe);
 
       int open_file(id_t fid, bool read, bool write, bool truncate, bool force_truncate, bool& try_again);
 
@@ -627,6 +630,7 @@ namespace neam::io
     private: // members:
       unsigned queue_depth;
       io_uring ring;
+      io_uring_sqe* returned_sqe = nullptr;
 
       std::string prefix_directory;
 

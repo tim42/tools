@@ -39,8 +39,6 @@ namespace neam::io::network
     ioctx->close(socket);
     socket = id_t::none;
 
-    on_close();
-
     if (server_base != nullptr)
     {
       server_base->move_to_ended_connections(*this);
@@ -53,6 +51,8 @@ namespace neam::io::network
       if (in_flight_operations.get_count() == 0)
         server_base->remove_from_ended_connections(*this);
     }
+
+    on_close();
   }
 
   context::write_chain connection_t::queue_send(raw_data&& data, uint32_t offset_in_data)
