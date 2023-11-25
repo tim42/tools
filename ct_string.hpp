@@ -112,6 +112,19 @@ namespace neam
         return ~0ul;
       }
 
+      constexpr bool starts_with(const string& prefix) const
+      {
+        return view().starts_with(prefix.view());
+      }
+      constexpr bool ends_with(const string& prefix) const
+      {
+        return view().ends_with(prefix.view());
+      }
+      constexpr bool contains(const string& prefix) const
+      {
+        return view().contains(prefix.view());
+      }
+
       constexpr string pad(size_t begin_offset, size_t end_offset) const noexcept
       {
         return { str + begin_offset, size - end_offset - begin_offset };
