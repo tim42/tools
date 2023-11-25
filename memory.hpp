@@ -43,4 +43,11 @@ namespace neam::memory
   /// \brief Returns a page to the OS.
   /// \note pointer must be page aligned.
   void free_page(void* page_ptr, uint32_t page_count, bool use_pool = true);
+
+
+  namespace statistics
+  {
+    uint32_t get_current_allocated_page_count();
+    uint32_t get_total_allocated_page_count();
+  }
 }

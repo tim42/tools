@@ -59,15 +59,23 @@ namespace neam::memory
   #endif
   }
 
+  namespace statistics
+  {
+    static std::atomic<uint32_t>& get_page_count_counter() { static std::atomic<uint32_t> counter; return counter; }
+    static std::atomic<uint32_t>& get_total_page_count_counter() { static std::atomic<uint32_t> counter; return counter; }
+  }
+
   namespace cache
   {
-    static constexpr bool k_enable_cache = false;
-    static constexpr uint32_t k_max_page_count = 32;
-    static constexpr uint32_t k_max_page_per_allocation = 6;
+    static constexpr bool k_enable_cache = true;
+    static constexpr uint32_t k_max_page_count = 64;
+    static constexpr uint32_t k_max_page_per_allocation = 8;
 
     struct cache_entry_t
     {
       std::atomic<void*> pages[k_max_page_count] = {nullptr};
+      std::atomic<uint32_t> insertion_index = 0;
+      std::atomic<int32_t> entry_count = 0;
     };
 
     struct cache_t
@@ -87,12 +95,14 @@ namespace neam::memory
 
       [[likely]] if (page_count < cache::k_max_page_per_allocation)
       {
+        // insertion in the cache is constant time
         cache_entry_t& cache = get_caches().caches[page_count];
-        for (uint32_t i = 0; i < k_max_page_count; ++i)
+        const uint32_t index = cache.insertion_index.fetch_add(1, std::memory_order_acq_rel) % k_max_page_count;
+        void* rqpage = nullptr;
+        if (cache.pages[index].compare_exchange_weak(rqpage, page, std::memory_order_acq_rel))
         {
-          void* rqpage = nullptr;
-          if (cache.pages[i].compare_exchange_weak(rqpage, page, std::memory_order_acq_rel))
-            return true;
+          cache.entry_count.fetch_add(1, std::memory_order_release);
+          return true;
         }
       }
       return false;
@@ -105,9 +115,19 @@ namespace neam::memory
       [[likely]] if (page_count < cache::k_max_page_per_allocation)
       {
         cache_entry_t& cache = get_caches().caches[page_count];
-        for (uint32_t i = 0; i < k_max_page_count; ++i)
+        const int32_t count = cache.entry_count.fetch_sub(1, std::memory_order_acq_rel);
+        if (count <= 0)
         {
-          void* page_ptr = cache.pages[i].exchange(nullptr, std::memory_order_acq_rel);
+          cache.entry_count.fetch_add(1, std::memory_order_acq_rel);
+          return nullptr;
+        }
+
+        // reading from the cache is constant time too
+        // (tho to account for the lack of atomicity between insertion index and entry_count, we have to read a few entries)
+        const uint32_t base_index = cache.insertion_index.load(std::memory_order_acquire) + k_max_page_count - count;
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+          void* page_ptr = cache.pages[(i + base_index) % k_max_page_count].exchange(nullptr, std::memory_order_acq_rel);
           if (page_ptr)
           {
             memset(page_ptr, 0, page_count * get_page_size());
@@ -129,12 +149,15 @@ namespace neam::memory
 
   void* allocate_page(uint32_t page_count, bool use_pool)
   {
+    statistics::get_page_count_counter().fetch_add(page_count, std::memory_order_release);
+
     [[likely]] if (use_pool)
     {
       void* ptr = cache::get_from_cache(page_count);
       if (ptr != nullptr)
         return ptr;
     }
+    statistics::get_total_page_count_counter().fetch_add(page_count, std::memory_order_release);
 
   #ifdef __unix__
     void *ptr = nullptr;
@@ -163,6 +186,8 @@ namespace neam::memory
   {
     [[unlikely]] if (page_ptr == nullptr) return;
 
+    statistics::get_page_count_counter().fetch_sub(page_count, std::memory_order_release);
+
     [[likely]] if (use_pool)
     {
       if (cache::add_to_cache(page_ptr, page_count))
@@ -170,12 +195,28 @@ namespace neam::memory
     }
 
   #ifdef __unix__
-    munmap(page_ptr, get_page_size() * page_count);
+    if (munmap(page_ptr, get_page_size() * page_count) == -1)
+    {
+      perror("munmap");
+      printf("trying to deallocate: %lu bytes\n", get_page_size() * page_count);
+    }
   #elif defined(_WIN32)
     VirtualFree(page_ptr, 0, MEM_RELEASE);
   #else
     free(page_ptr);
   #endif
+  }
+
+  namespace statistics
+  {
+    uint32_t get_current_allocated_page_count()
+    {
+      return get_page_count_counter().load(std::memory_order_acquire);
+    }
+    uint32_t get_total_allocated_page_count()
+    {
+      return get_total_page_count_counter().load(std::memory_order_acquire);
+    }
   }
 }
 
