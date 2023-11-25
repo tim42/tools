@@ -44,7 +44,18 @@ namespace neam
     void* get() { return data.get(); }
     const void* get() const { return data.get(); }
 
-    void reset() { data.reset(); }
+    template<typename T>
+    T* get_as() { return (T*)data.get(); }
+    template<typename T>
+    const T* get_as() const { return (T*)data.get(); }
+
+    explicit operator bool () { return !!data; }
+
+    void reset() { data.reset(); size = 0; }
+    [[nodiscard]] void* release() { size = 0; return data.release(); }
+
+    template<typename T>
+    [[nodiscard]] T* release_as() { size = 0; return (T*)data.release(); }
 
     /// \brief duplicate the raw data / its allocation.
     /// Explicit (no operator = ) so as to avoid mistakenly duplicating this stuff
