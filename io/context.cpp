@@ -56,6 +56,8 @@ namespace neam::io
     // close all opened fd:
     for (auto& it : opened_fd)
       check::unx::n_check_success(::close(it.second.fd));
+    for (int it : fd_to_be_closed)
+      check::unx::n_check_success(::close(it));
 
     // exit uring
     io_uring_queue_exit(&ring);
@@ -218,7 +220,7 @@ namespace neam::io
     for (auto& it : temp_fd)
     {
       if (include_sockets || (!it.second.socket && !it.second.pipe))
-        _unlocked_close(it.first);
+        fd_to_be_closed.insert(it.second.fd);
       else
         opened_fd.emplace_hint(opened_fd.end(), it.first, it.second);
     }
@@ -590,6 +592,7 @@ namespace neam::io
     {
       std::lock_guard<spinlock> _fdl(fd_lock);
       std::vector<id_t> to_remove;
+      bool had_files = !opened_fd.empty();
       for (auto& it : opened_fd)
       {
         if (it.second.file && (it.second.counter++) >= k_max_cycle_to_close)
@@ -600,6 +603,8 @@ namespace neam::io
       }
       for (const id_t id : to_remove)
         opened_fd.erase(id);
+      if (had_files && opened_fd.empty())
+        cr::out().debug("io::context: all opened fd are now closed");
     }
 
     // It may call process_completed_queries() when needed
@@ -893,7 +898,7 @@ namespace neam::io
       const int fd = open(it->second.c_str(), flags, 0644);
       if (offset != 0) // restore the offset
         lseek(fd, offset, SEEK_SET);
-      neam::cr::out().debug("io::context::open_file: opening `{}` [read: {}, write: {}]", it->second.c_str(), read, write);
+      neam::cr::out().debug("io::context::open_file: opening `{}` [read: {}, write: {}, fd: {}]", it->second.c_str(), read, write, fd);
 
       if (fd < 0)
       {
