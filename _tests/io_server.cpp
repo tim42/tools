@@ -174,8 +174,8 @@ void split_buffer(connection_state& state, uint32_t from)
 
 int main(int argc, char** argv)
 {
-  cr::out.min_severity = neam::cr::logger::severity::message;
-  cr::out.register_callback(neam::cr::print_log_to_console, nullptr);
+  cr:: get_global_logger().min_severity = neam::cr::logger::severity::message;
+  cr:: get_global_logger().register_callback(neam::cr::print_log_to_console, nullptr);
 
   // parse command line args:
   cmdline::parse cmd(argc, argv);
@@ -199,7 +199,7 @@ int main(int argc, char** argv)
   }
 
   if (gbl_opt.debug)
-    cr::out.min_severity = neam::cr::logger::severity::debug;
+    cr:: get_global_logger().min_severity = neam::cr::logger::severity::debug;
 
   static constexpr uint32_t k_thread_count = 7;
   if (gbl_opt.multithreaded)

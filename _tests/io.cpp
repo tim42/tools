@@ -28,8 +28,8 @@ N_METADATA_STRUCT(global_options)
 
 int main(int argc, char**argv)
 {
-  cr::out.min_severity = neam::cr::logger::severity::debug;
-  cr::out.register_callback(neam::cr::print_log_to_console, nullptr);
+  cr:: get_global_logger().min_severity = neam::cr::logger::severity::debug;
+  cr:: get_global_logger().register_callback(neam::cr::print_log_to_console, nullptr);
 
   cmdline::parse cmd(argc, argv);
   bool success = false;

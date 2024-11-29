@@ -81,8 +81,8 @@ moc_chain recurse(move_only_thingy&& o, size_t& counter, bool second_branch)
 
 int main(int, char**)
 {
-  cr::out.min_severity = neam::cr::logger::severity::debug;
-  cr::out.register_callback(neam::cr::print_log_to_console, nullptr);
+  cr:: get_global_logger().min_severity = neam::cr::logger::severity::debug;
+  cr:: get_global_logger().register_callback(neam::cr::print_log_to_console, nullptr);
 
   mo_chain ch;
   mo_chain::state st = ch.create_state();

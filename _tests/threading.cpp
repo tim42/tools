@@ -94,8 +94,8 @@ mo_chain recurse(threading::task_manager& tm, move_only_thingy&& o, bool second_
 
 int main(int, char**)
 {
-  cr::out.min_severity = neam::cr::logger::severity::debug;
-  cr::out.register_callback(neam::cr::print_log_to_console, nullptr);
+  cr:: get_global_logger().min_severity = neam::cr::logger::severity::debug;
+  cr:: get_global_logger().register_callback(neam::cr::print_log_to_console, nullptr);
 
   threading::task_manager tm;
   {

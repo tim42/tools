@@ -136,7 +136,7 @@ void read_fd(neam::id_t fd, io::context& ctx, Fnc&& fnc)
 
 int main(int argc, char** argv)
 {
-  cr::out.register_callback(neam::cr::print_log_to_console, nullptr);
+  cr:: get_global_logger().register_callback(neam::cr::print_log_to_console, nullptr);
 
   rpc::internal::log_functions();
   // parse command line args:
