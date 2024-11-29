@@ -83,10 +83,11 @@ namespace neam::ct
 
   /// \brief The name of the type, as a constexpr string.
   template<typename T>
-  static constexpr string type_name = { details::tholder<T>::name.data(), details::tholder<T>::name.size() - 1 };
+  static constexpr string_holder type_name = string_holder<details::tholder<T>::name.size() - 1>::from_c_string_same_size(details::tholder<T>::name.data());
+
   /// \brief The name of the decayed type, as a constexpr string.
   template<typename T>
-  static constexpr string decayed_type_name = type_name<std::decay_t<T>>;
+  static constexpr string_holder decayed_type_name = type_name<std::decay_t<T>>;
 
   /// \brief A string for the corresponding value
   template<auto V>
@@ -105,9 +106,9 @@ namespace neam::ct
 } // namespace neam::ct
 
 #ifdef NCT_TESTS
-    static_assert(neam::ct::type_name<int> == neam::ct::string{"int"});
-    static_assert(neam::ct::type_name<double> == neam::ct::string{"double"});
-    static_assert(neam::ct::type_name<double[]> == neam::ct::string{"double []"});
-    static_assert(neam::ct::type_name<neam::ct::string> == neam::ct::string{"neam::ct::string"});
+    static_assert((neam::ct::string)neam::ct::type_name<int> == neam::ct::string{"int"});
+    static_assert((neam::ct::string)neam::ct::type_name<double> == neam::ct::string{"double"});
+    static_assert((neam::ct::string)neam::ct::type_name<double[]> == neam::ct::string{"double []"});
+    static_assert((neam::ct::string)neam::ct::type_name<neam::ct::string> == neam::ct::string{"neam::ct::string"});
 #endif
 

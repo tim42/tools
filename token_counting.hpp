@@ -95,7 +95,7 @@ namespace neam::cr
       void clear_callback() { data->callback = {}; }
 
     private:
-      auto_pooled_ptr<ref_count_t> data = make_pooled_ptr<ref_count_t>();
+      auto_pooled_ptr<ref_count_t> data = make_auto_pooled_ptr<ref_count_t>();
   };
 }
 

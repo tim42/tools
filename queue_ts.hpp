@@ -58,10 +58,6 @@ namespace neam::cr
       uninit_ptr->lock._unlock();
     }
 
-    bool is_constructed() const
-    {
-      return !lock._get_state();
-    }
     void wait_constructed() const
     {
       lock._wait_for_lock();
@@ -94,19 +90,17 @@ namespace neam::cr
     static void construct_at(queue_ts_atomic_wrapper* uninit_memory, InnerType&& v)
     {
       check::debug::n_assert(v != InvalidValue, "Cannot assign InvalidValue to a queue_ts_atomic_wrapper. Will deadlock.");
-      new (uninit_memory) queue_ts_atomic_wrapper { std::move(v) };
+      // new (uninit_memory) queue_ts_atomic_wrapper { std::move(v) };
+      uninit_memory->value.store(v, std::memory_order_release);
     }
 
-    bool is_constructed() const
-    {
-      return value.load(std::memory_order_acquire) != InvalidValue;
-    }
     void wait_constructed() const
     {
-      while (value.load(std::memory_order_acquire) == InvalidValue)
+      do
       {
         while (value.load(std::memory_order_relaxed) == InvalidValue);
       }
+      while (value.load(std::memory_order_acquire) == InvalidValue);
     }
 
     void get(InnerType& v) { v = value.load(std::memory_order_relaxed); }
@@ -116,14 +110,14 @@ namespace neam::cr
 
   /// \brief Task queue, where multiple threads pushes data to multiple consumer threads.
   /// \note InnerType must be movable, Type must respect queue_ts_wrapper interface
-  template<typename Type>
+  template<typename Type, uint32_t MinEntryCountPerPage = 511>
   class queue_ts
   {
     private:
       // NOTE: the lack of contention directly comes form this number being high enough
       //       and threads not spinning/adding tasks.
       //       that number is chosen so that 8byte entries take one 4k page
-      static constexpr uint32_t k_min_entries_per_page = 1020;
+      static constexpr uint32_t k_min_entries_per_page = MinEntryCountPerPage;
 
       using arg_t = Type::type_t;
     public:
@@ -131,14 +125,18 @@ namespace neam::cr
       {
         check::debug::n_assert(entry_count_per_page >= k_min_entries_per_page - 1, "queue_ts: invalid entry-count per page: {}, min should be {}", entry_count_per_page, k_min_entries_per_page - 1);
         check::debug::n_assert(entry_count_per_page < k_page_can_be_freed_marker, "queue_ts: invalid entry-count per page: {}, max should be {}", entry_count_per_page, k_page_can_be_freed_marker - 1);
+        check::debug::n_assert((index_mod % entry_count_per_page) != 0, "queue_ts: invalid index mod: {}", index_mod);
 
         read_page.store((page_t*)allocate_page());
         write_page.store(read_page.load());
+        next_write_page.store((page_t*)allocate_page());
       }
 
       ~queue_ts()
       {
         write_page.store(nullptr, std::memory_order_release);
+        free_page(next_write_page.load());
+        // free_page(page_to_free.load());
         page_t* page = read_page.exchange(nullptr, std::memory_order_acq_rel);
         while (page != nullptr)
         {
@@ -151,44 +149,39 @@ namespace neam::cr
       void push_back(arg_t&& t)
       {
         // write_page is assumed to be always valid
-        page_t* page = write_page.load(std::memory_order::acquire);
-
+        page_t* page;
         uint32_t index;
-        while (true)
         {
-          index = page->header.insertion_index.fetch_add(1, std::memory_order_acq_rel);
-          [[unlikely]] if (index >= entry_count_per_page)
+          // Get the page
+          while (true)
           {
-            page->header.insertion_index.store(entry_count_per_page, std::memory_order_release);
-            page_t* old_page = page;
-            // reload the page:
-            page = write_page.load(std::memory_order::acquire);
-            // if we got a different page, we simply retry with the new page.
-            // otherwise, we grab the next page.
-            [[unlikely]] if (old_page == page)
             {
-              page_t* next_page = page->header.next();
-              if (next_page != nullptr)
-                page = next_page;
-              // no change, yield and reload the page
-              [[unlikely]] if (page == old_page)
-              {
-                // we should almost never go here, unless the allocation for the next page got stuck somewhere
-                page = write_page.load(std::memory_order::acquire);
-              }
+              page = write_page.load(std::memory_order::acquire);
+              index = page->header.insertion_index.fetch_add(1, std::memory_order_acq_rel);
+              [[likely]] if (index < entry_count_per_page)
+                break;
             }
-            continue;
-          }
 
-          break;
+            // FIXME: Use umwait
+            do
+            {
+              while (write_page.load(std::memory_order_relaxed) == page);
+            }
+            while (write_page.load(std::memory_order_acquire) == page);
+          }
         }
 
         if (index == entry_count_per_page - 1)
-          write_page.store(page->header.next(), std::memory_order_release);
+        {
+          page_t* const next_page = next_write_page.exchange((page_t*)allocate_page(), std::memory_order_acq_rel);
+          check::debug::n_assert(next_page != nullptr, "queue_ts::push_back: impossible state found: next_write_page was expected to not be null, but is instead null");
+          page->header.set_as_next(next_page); // for readers
+          write_page.store(next_page, std::memory_order_release);
+        }
 
         // construct the object:
         // NOTE: this will unlock any thread that was waiting on this operation
-        Type::construct_at(&page->data[index], std::move(t));
+        Type::construct_at(&page->at(index), std::move(t));
 
         // Do that now, as we want to minimize time spent waiting on the try_pop_front function.
         // Incrementing the entry-count here (instead of before the construct_at) makes the class conservative
@@ -197,11 +190,11 @@ namespace neam::cr
 
         // we got the first index, allocate the next page
         // this does increase consumed memory, but prevent almost all contention/waits caused by memory allocation
-        if (index == 0)
-        {
-          page_t* next_page = (page_t*)allocate_page();
-          page->header.set_as_next(next_page);
-        }
+        // if (index == entry_count_per_page - 1)
+        // {
+        //   page_t* const null_page = next_write_page.exchange((page_t*)allocate_page(), std::memory_order_release);
+        //   check::debug::n_assert(null_page == nullptr, "queue_ts::push_back: impossible state found: next_write_page was expected to be null, but is instead non-null");
+        // }
       }
 
       /// \brief Try removing the first value from the queue.
@@ -225,25 +218,25 @@ namespace neam::cr
         // We have guarantee that there is an object to retrive for the current thread, and that we will never go over the write index
         page_t* page;
         uint32_t index = ~0u;
+        uint32_t cons_index = ~0u;
         {
-          std::lock_guard _lg(spinlock_shared_adapter::adapt(read_page_in_use_lock));
-          page = read_page.load(std::memory_order_acquire);
+          // Get the page
           while (true)
           {
-            index = page->header.read_index.fetch_add(1, std::memory_order_acq_rel);
-            [[unlikely]] if (index >= entry_count_per_page)
             {
-              page->header.read_index.store(entry_count_per_page, std::memory_order_release);
-              page_t* old_page = page;
-              page = read_page.load(std::memory_order_acquire);
-              [[unlikely]] if (page == old_page)
-              {
-                page = page->header.next();
-                check::debug::n_assert(page != nullptr, "queue_ts::try_pop_front: impossible state found (no next page, but entry_count indicate that there is a value to get)");
-              }
-              continue;
+              std::lock_guard _lg(spinlock_shared_adapter::adapt(read_page_in_use_lock));
+              page = read_page.load(std::memory_order::acquire);
+              index = /*page->header.*/read_index.fetch_add(1, std::memory_order_acq_rel);
+              cons_index = data_index.load(std::memory_order::acquire);
+
+              [[likely]] if (index < entry_count_per_page)
+                break;
+              // else
+              //   /*page->header.*/read_index.store(entry_count_per_page, std::memory_order_release);
             }
-            break;
+
+            // FIXME: Use umwait
+            while (read_page.load(std::memory_order_relaxed) == page);
           }
         }
 
@@ -253,37 +246,40 @@ namespace neam::cr
         check::debug::n_assert(index < windex, "queue_ts::try_pop_front: impossible state found: read-index ({}) is >= than the write-index ({}). Assertion that entry-count ({}) is conservative is invalid.", index, windex, current_count);
 #endif
 
-        if (index == entry_count_per_page - 1)
-        {
-          // note done under the lock so that other threads can progress
-          read_page.store(page->header.next(), std::memory_order_release);
-          page->header.consumed_elem_count.fetch_or(k_page_can_be_freed_marker, std::memory_order_release);
-        }
-
-        // Wait for the object to be constructed (should not happen in most cases)
-        page->data[index].wait_constructed();
-
-        page->data[index].get(t);
-
-        if constexpr(Type::k_need_destruct)
-        {
-          page->data[index].~Type();
-        }
-
-        // this operation is done last, so that the page is never referenced after
-        const uint16_t res = 1 + page->header.consumed_elem_count.fetch_add(1, std::memory_order_acq_rel);
-        if (res == (k_page_can_be_freed_marker | entry_count_per_page))
+        [[unlikely]] if (index == entry_count_per_page - 1)
         {
           {
             // we simply want a barrier, making sure that any thread that were in the loop have exited before freeing a page they might have used
             // read page has already been changed, it's just to make sure no other thread has refs to this page
             // It might not be necessary at all, it's here just in case things are a bit slower than usual
             std::lock_guard _lg(spinlock_exclusive_adapter::adapt(read_page_in_use_lock));
-          }
-          // check::debug::n_assert(page != read_page.load(std::memory_order_relaxed), "queue_ts::try_pop_front: freeing in-use page");
-          // check::debug::n_assert(page != write_page.load(std::memory_order_relaxed), "queue_ts::try_pop_front: freeing in-use page");
 
-          free_page(page);
+            read_index.store(0, std::memory_order_relaxed);
+            read_page.store(page->header.next(), std::memory_order_relaxed);
+            data_index.store((data_index.load(std::memory_order_acquire) + 1) % k_consumed_elem_count, std::memory_order_relaxed);
+            consumed_elem_count[data_index.load(std::memory_order_relaxed)] = 0;
+          }
+          // read_page.store(page->header.next(), std::memory_order_release);
+          // page->header.consumed_elem_count.fetch_or(k_page_can_be_freed_marker, std::memory_order_release);
+          consumed_elem_count[cons_index].fetch_or(k_page_can_be_freed_marker, std::memory_order_release);
+        }
+
+        // Wait for the object to be constructed (should not happen in most cases)
+        page->at(index).wait_constructed();
+
+        page->at(index).get(t);
+
+        if constexpr(Type::k_need_destruct)
+        {
+          page->at(index).~Type();
+        }
+
+        // this operation is done last, so that the page is never referenced after
+        const uint16_t res = 1 + /*page->header.*/consumed_elem_count[cons_index].fetch_add(1, std::memory_order_acq_rel);
+        [[unlikely]] if (res == (k_page_can_be_freed_marker | entry_count_per_page))
+        // [[unlikely]] if (index == entry_count_per_page - 1)
+        {
+          free_page(page_to_free.exchange(page, std::memory_order_acq_rel));
         }
 
         return true;
@@ -304,7 +300,7 @@ namespace neam::cr
 
         if constexpr (Type::k_need_preinit)
         {
-          Type* const data = &(((page_t*)(mem))->data[0]);
+          Type* const data = &(((page_t*)(mem))->_data[0]);
           for (uint32_t i = 0; i < entry_count_per_page; ++i)
             Type::preinit(&data[i]);
         }
@@ -314,17 +310,16 @@ namespace neam::cr
 
       static void free_page(void* page_ptr)
       {
+        if (!page_ptr) return;
+
         if constexpr (Type::k_need_destruct)
         {
-          Type* const data = (Type*)((uint8_t*)page_ptr + offsetof(page_t, data));
-          const page_header_t* const header = (page_header_t*)page_ptr;
-          const uint32_t last = header->insertion_index.load(std::memory_order_relaxed);
-          for (uint32_t i = header->read_index.load(std::memory_order_relaxed); i < last && i < entry_count_per_page; ++i)
-            data[i].~Type();
+          // Type* const data = (Type*)((uint8_t*)page_ptr + offsetof(page_t, _data));
+          // const page_header_t* const header = (page_header_t*)page_ptr;
+          // const uint32_t last = header->insertion_index.load(std::memory_order_relaxed);
+          // for (uint32_t i = header->read_index.load(std::memory_order_relaxed); i < last && i < entry_count_per_page; ++i)
+            // data[i].~Type();
         }
-#if !N_DISABLE_CHECKS
-        // memset(page_ptr, 0x55, sizeof(page_header_t));
-#endif
         memory::free_page(page_ptr, page_count);
       }
 
@@ -334,9 +329,9 @@ namespace neam::cr
       {
         std::atomic<void*> next_page = nullptr;
         // Index (multiple of Type) where to insert in the current page.
-        std::atomic<uint16_t> insertion_index = 0;
-        std::atomic<uint16_t> read_index = 0;
-        std::atomic<uint16_t> consumed_elem_count = 0;
+        std::atomic<uint32_t> insertion_index = 0;
+        // std::atomic<uint16_t> read_index = 0;
+        // std::atomic<uint16_t> consumed_elem_count = 0;
 
         page_t* next() const { return reinterpret_cast<page_t*>(next_page.load(std::memory_order_acquire)); }
         void set_as_next(page_t* next_ptr) { next_page.store(next_ptr, std::memory_order_release); }
@@ -346,21 +341,36 @@ namespace neam::cr
       {
         page_header_t header = {};
 
-        Type data[];
+        Type& at(uint32_t index)
+        {
+          return _data[index];
+        }
+
+        Type _data[];
       };
       static_assert(offsetof(page_t, header) == 0);
 
-      static constexpr uint32_t k_min_page_size = offsetof(page_t, data) + k_min_entries_per_page * sizeof(Type);
+      static constexpr uint32_t k_min_page_size = offsetof(page_t, _data) + k_min_entries_per_page * sizeof(Type);
       static const inline uint32_t page_count = (uint32_t)(k_min_page_size + memory::get_page_size() - 1) / memory::get_page_size();
-      static const inline uint32_t entry_count_per_page = (page_count * memory::get_page_size() - offsetof(page_t, data)) / sizeof(Type);
+      static const inline uint32_t entry_count_per_page = (page_count * memory::get_page_size() - offsetof(page_t, _data)) / sizeof(Type);
+      static const inline uint32_t index_mod = (8);
       static constexpr uint16_t k_page_can_be_freed_marker = 0x8000;
 
-      std::atomic<page_t*> read_page = nullptr;
-      std::atomic<page_t*> write_page = nullptr;
-      std::atomic<int32_t> entry_count = 0; // conservative, always <= to the real entry count
+      alignas(64) std::atomic<page_t*> read_page = nullptr;
+      std::atomic<uint32_t> data_index = 0;
+      alignas(64) std::atomic<uint32_t> read_index = 0;
+      static constexpr uint32_t k_consumed_elem_count = 4;
+      std::atomic<uint32_t> consumed_elem_count[k_consumed_elem_count] = {0};
+
+      alignas(64) std::atomic<page_t*> write_page = nullptr;
+      std::atomic<page_t*> next_write_page = nullptr;
+
+      std::atomic<page_t*> page_to_free = nullptr;
+
+      alignas(64) std::atomic<int32_t> entry_count = 0; // conservative, always <= to the real entry count
 
       // so we can properly release pages
-      shared_spinlock read_page_in_use_lock;
+      alignas(64) shared_spinlock read_page_in_use_lock;
   };
 }
 

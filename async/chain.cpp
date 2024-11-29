@@ -1,9 +1,9 @@
 //
 // created by : Timothée Feuillet
-// date: 2022-5-20
+// date: 2024-06-12
 //
 //
-// Copyright (c) 2022 Timothée Feuillet
+// Copyright (c) 2024 Timothée Feuillet
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,17 +24,23 @@
 // SOFTWARE.
 //
 
-#pragma once
+#include "chain.hpp"
 
-#include <utility> // for to_underlying
+namespace neam::async
+{
+  namespace internal
+  {
+    state_t& get_thread_state()
+    {
+      thread_local state_t state {};
+      return state;
+    }
+  }
 
-#define N_ENUM_FLAG(Enum)  \
-constexpr static Enum operator~ (Enum a) { return static_cast<Enum>(~std::to_underlying(a)); } \
-constexpr static Enum operator| (Enum a, Enum b) { return static_cast<Enum>(std::to_underlying(a) | std::to_underlying(b)); } \
-constexpr static Enum operator& (Enum a, Enum b) { return static_cast<Enum>(std::to_underlying(a) & std::to_underlying(b)); } \
-constexpr static Enum operator^ (Enum a, Enum b) { return static_cast<Enum>(std::to_underlying(a) ^ std::to_underlying(b)); } \
-constexpr static Enum& operator|= (Enum& a, Enum b) { a = static_cast<Enum>(std::to_underlying(a) | std::to_underlying(b)); return a; } \
-constexpr static Enum& operator&= (Enum& a, Enum b) { a = static_cast<Enum>(std::to_underlying(a) & std::to_underlying(b)); return a; } \
-constexpr static Enum& operator^= (Enum& a, Enum b) { a = static_cast<Enum>(std::to_underlying(a) ^ std::to_underlying(b)); return a; } \
-constexpr static bool has_flag(Enum a, Enum flag) { return (a & flag) == flag; }
-
+  bool is_current_chain_canceled()
+  {
+    const auto& state = internal::get_thread_state();
+    check::debug::n_check(state.has_active_chain_call, "neam::async::is_current_chain_canceled() called outside of a chain");
+    return state.canceled;
+  }
+}

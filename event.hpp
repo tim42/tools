@@ -26,7 +26,7 @@
 
 #pragma once
 
-#include <vector>
+#include "mt_check/vector.hpp"
 #include "async/async.hpp"
 #include "debug/assert.hpp"
 #include "spinlock.hpp"
@@ -93,7 +93,7 @@ namespace neam::cr
       event_token_list_t& operator += (event_token_t&& tk) { tokens.push_back(std::move(tk)); return *this; }
 
     private:
-      std::vector<event_token_t> tokens;
+      std::mtc_vector<event_token_t> tokens;
   };
 
   /// \brief Simple (thread-safe) multicast delegate
@@ -239,7 +239,7 @@ namespace neam::cr
         InnerType func;
         uint32_t in_use = 0;
       };
-      std::vector<entry_t> functions;
+      std::mtc_vector<entry_t> functions;
       static constexpr uint64_t k_null_token = 0;
       uint64_t token = k_null_token + 1;
       uint32_t count = 0;

@@ -29,6 +29,8 @@
 #include <atomic>
 #include "tracy.hpp"
 #include "memory.hpp"
+#include "raw_ptr.hpp"
+#include "mt_check/mt_check_base.hpp"
 
 namespace neam::cr
 {
@@ -36,7 +38,7 @@ namespace neam::cr
   /// \brief IsArray means that all allocations will have the same type / same memory footprint
   /// \note Contention makes it slow
   /// \todo Do a better multi-threading-aware implem
-  template<size_t PageCount = 4, bool IsArray = false>
+  template<size_t PageCount = 4, bool IsArray = false, uint32_t Alignment = 8>
   class frame_allocator
   {
     private:
@@ -49,33 +51,99 @@ namespace neam::cr
 
     public:
       /// \brief non-thread safe class that will store the current state of the allocator for postponning deallocation
-      class allocator_state
+      class allocator_state : public cr::mt_checked<allocator_state>
       {
         public:
-          explicit allocator_state(chunk_t* chunk) : first(chunk) {}
+          explicit allocator_state(chunk_t* chunk, uint32_t count) : entry_count(count), first(chunk) {}
           allocator_state() = default;
 
           ~allocator_state() { destroy(); }
-          allocator_state(allocator_state&& o) : first(o.first) { o.first = nullptr; }
+          allocator_state(allocator_state&& o) = default;
           allocator_state& operator = (allocator_state&& o)
           {
+            N_MTC_WRITER_SCOPE;
+
             if (&o == this) return *this;
             destroy();
-            first = o,first;
+            first = std::move(o.first);
+            chunk_array = std::move(o.chunk_array);
+
             o.first = nullptr;
+            return *this;
           }
 
+          /// \brief Construct a fast access table for get_entry
+          /// \warning Not multi-thread safe
+          void build_array_access_accelerator() requires IsArray
+          {
+            N_MTC_WRITER_SCOPE;
+
+            chunk_t* it = first;
+            while (it != nullptr)
+            {
+              chunk_array.push_back(it);
+              it = it->next;
+            }
+          }
+
+          /// \brief Index the in the allocated memory. Requires IsArray to be true.
+          /// \warning Slow if build_array_access_accelerator wasn't called
+          template<typename Type>
+          Type* get_entry(size_t index) const requires IsArray
+          {
+            N_MTC_READER_SCOPE;
+
+            if (!first) return nullptr;
+
+            const uint64_t data_size = memory::get_page_size() * PageCount - sizeof(chunk_t);
+            const size_t entry_per_chunk = data_size / sizeof(Type);
+            size_t chunk_index = index / entry_per_chunk;
+            const size_t offset_in_chunk = (index % entry_per_chunk) * sizeof(Type);
+            chunk_t* it = first;
+
+            if (chunk_index < chunk_array.size())
+            {
+              [[likely]];
+              it = chunk_array[chunk_index];
+            }
+            else
+            {
+              while (it != nullptr && chunk_index > 0)
+              {
+                it = it->next;
+                --chunk_index;
+              }
+            }
+
+            if (it == nullptr)
+              return nullptr;
+
+            if (it->offset < offset_in_chunk + sizeof(Type))
+              return nullptr;
+
+            return (Type*)(&it->data[offset_in_chunk]);
+          }
+
+          /// \brief Explicitly destroy the state (and clear all the allocations)
           void destroy()
           {
+            N_MTC_WRITER_SCOPE;
+
             while (first != nullptr)
             {
               chunk_t* next = first->next;
-              operator delete(first);
+              memory::free_page(first.release(), PageCount);
               first = next;
             }
+            chunk_array.clear();
           }
+
+          uint32_t size() const { return entry_count; }
+
         private:
-          chunk_t* first = nullptr;
+          uint32_t entry_count;
+          raw_ptr<chunk_t> first;
+          std::vector<chunk_t*> chunk_array;
       };
 
     public:
@@ -92,10 +160,10 @@ namespace neam::cr
         if (count == 0)
           return nullptr;
 
-        // align the size on 8 (which force all alignments to be 8)
+        // align the size on Alignment (which force all alignments to be Alignment)
         // and allows to disregard alignemnts as a whole
-        if (count % 8 != 0)
-          count += 8 - count % 8;
+        if (count % Alignment != 0)
+          count += Alignment - count % Alignment;
 
         std::lock_guard<spinlock> _lg(lock);
 
@@ -126,6 +194,7 @@ namespace neam::cr
         uint32_t offset = current_chunk->offset;
         current_chunk->offset += count;
         total_memory += count;
+        allocation_count += 1;
         TRACY_PLOT(pool_debug_name.data(), (int64_t)total_memory);
         return &current_chunk->data[offset];
       }
@@ -134,12 +203,12 @@ namespace neam::cr
       template<typename Type, typename... Args>
       Type* allocate(Args&&... args)
       {
-        static_assert(alignof(Type) <= 8, "Cannot allocate a type with alignment > 8");
+        static_assert(alignof(Type) <= Alignment, "Cannot allocate a type with alignment > Alignment");
         void* ptr = allocate(sizeof(Type));
         if (ptr != nullptr)
         {
           Type* tptr = reinterpret_cast<Type*>(ptr);
-          new (tptr) Type(std::forward<Args>(args)...);
+          new (tptr) Type{std::forward<Args>(args)...};
           return tptr;
         }
         return nullptr;
@@ -154,15 +223,15 @@ namespace neam::cr
         if (first_chunk == nullptr)
           return {};
 
-        chunk_t* current;
+        chunk_t* const current = first_chunk;
+        const uint32_t current_count = allocation_count;
 
-        current = first_chunk;
         first_chunk = nullptr;
         allocation_count = 0;
         total_memory = 0;
         current_chunk = nullptr;
 
-        return allocator_state(current);
+        return allocator_state(current, current_count);
       }
 
       /// \brief Clear the state of the allocator, only free n chunks (will always keep the first chunk allocated
@@ -223,6 +292,7 @@ namespace neam::cr
       }
 
       /// \brief If IsArray, return the entry at a given index. Might be slow.
+      /// \warning Slow
       template<typename Type>
       Type* get_entry(size_t index) const requires IsArray
       {

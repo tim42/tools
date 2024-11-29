@@ -1,9 +1,9 @@
 //
 // created by : Timothée Feuillet
-// date: 2022-5-20
+// date: 2024-3-12
 //
 //
-// Copyright (c) 2022 Timothée Feuillet
+// Copyright (c) 2024 Timothée Feuillet
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -26,15 +26,18 @@
 
 #pragma once
 
-#include <utility> // for to_underlying
+namespace neam
+{
+  template<typename T>
+  class skip_copy : public T
+  {
+    public:
+      using T::T;
 
-#define N_ENUM_FLAG(Enum)  \
-constexpr static Enum operator~ (Enum a) { return static_cast<Enum>(~std::to_underlying(a)); } \
-constexpr static Enum operator| (Enum a, Enum b) { return static_cast<Enum>(std::to_underlying(a) | std::to_underlying(b)); } \
-constexpr static Enum operator& (Enum a, Enum b) { return static_cast<Enum>(std::to_underlying(a) & std::to_underlying(b)); } \
-constexpr static Enum operator^ (Enum a, Enum b) { return static_cast<Enum>(std::to_underlying(a) ^ std::to_underlying(b)); } \
-constexpr static Enum& operator|= (Enum& a, Enum b) { a = static_cast<Enum>(std::to_underlying(a) | std::to_underlying(b)); return a; } \
-constexpr static Enum& operator&= (Enum& a, Enum b) { a = static_cast<Enum>(std::to_underlying(a) & std::to_underlying(b)); return a; } \
-constexpr static Enum& operator^= (Enum& a, Enum b) { a = static_cast<Enum>(std::to_underlying(a) ^ std::to_underlying(b)); return a; } \
-constexpr static bool has_flag(Enum a, Enum flag) { return (a & flag) == flag; }
+      skip_copy(const skip_copy&) {}
+      skip_copy& operator =(const skip_copy&) { return *this; }
+
+    private:
+  };
+}
 

@@ -135,6 +135,7 @@ namespace neam::cr
         return ptr;
       }
 
+      constexpr std::strong_ordering operator <=> (pointer t) const { return ptr <=> t; }
       constexpr std::strong_ordering operator <=> (const raw_ptr& t) const { return ptr <=> t.ptr; }
       constexpr std::strong_ordering operator <=> (std::nullptr_t t) const { return ptr <=> t; }
 

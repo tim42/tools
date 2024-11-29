@@ -17,25 +17,24 @@
 //  - invalid unlocks (both wrong ownership and already unlocked)
 //  - invalid spinlock (mostly use-after-destruction)
 #ifndef N_ENABLE_LOCK_DEBUG
-  #define N_ENABLE_LOCK_DEBUG true
+  #define N_ENABLE_LOCK_DEBUG false
 #endif
 #if N_ENABLE_LOCK_DEBUG
   #ifdef __linux__
     #include <execinfo.h>
   #endif
 #endif
+#include "tracy.hpp"
+#if N_ENABLE_LOCK_DEBUG && N_USE_TRACY
+  #include <source_location>
+  #include <map>
+  #include "hash/fnv1a.hpp"
+  #include "ct_string.hpp"
+#endif
 namespace neam
 {
   namespace spinlock_internal
   {
-#ifdef __cpp_lib_hardware_interference_size
-    using std::hardware_constructive_interference_size;
-    using std::hardware_destructive_interference_size;
-#else
-    // 64 bytes on x86-64 │ L1_CACHE_BYTES │ L1_CACHE_SHIFT │ __cacheline_aligned │ ...
-    constexpr std::size_t hardware_constructive_interference_size = 64;
-    constexpr std::size_t hardware_destructive_interference_size = 64;
-#endif
 #if N_ENABLE_LOCK_DEBUG
   #ifdef __linux__
     inline void print_backtrace()
@@ -52,15 +51,21 @@ namespace neam
   }
 
   /// \brief a simple spinlock class
-  class /*alignas(spinlock_internal::hardware_destructive_interference_size)*/ spinlock
+  class spinlock
   {
     public:
       spinlock() = default;
+
 #if N_ENABLE_LOCK_DEBUG
       ~spinlock()
       {
         // poison the lock
-        lock();
+        if (!try_lock())
+        {
+          printf("[spinlock: trying to destroy a locked lock]\n");
+          spinlock_internal::print_backtrace();
+          abort();
+        }
         owner_id = std::thread::id();
         key = k_destructed_key_value;
       }
@@ -85,7 +90,9 @@ namespace neam
         while (true)
         {
           if (try_lock())
+          {
             return;
+          }
           while (_relaxed_test());
         }
       }
@@ -100,7 +107,9 @@ namespace neam
         while (true)
         {
           if (try_lock())
+          {
             return;
+          }
           while (_relaxed_test());
         }
       }
@@ -298,6 +307,7 @@ namespace neam
 
         // we have the exclusive lock, release our shared lock
         unlock_shared();
+
         // and wait for the remaining shared locks to be released
         if (shared_count.load(std::memory_order_seq_cst) != 0)
         {
@@ -308,7 +318,7 @@ namespace neam
           while (shared_count.load(std::memory_order_acquire) != 0);
         }
 
-        // no got the exclusive lock in a single atomic operation
+        // we got the exclusive lock in a single atomic operation
         return true;
       }
 
@@ -351,19 +361,47 @@ namespace neam
   class spinlock_exclusive_adapter
   {
     public:
-      static spinlock_exclusive_adapter& adapt(shared_spinlock& sl) { return reinterpret_cast<spinlock_exclusive_adapter&>(sl); }
 
-      void lock() { reinterpret_cast<shared_spinlock*>(this)->lock_exclusive(); }
-      void unlock() { reinterpret_cast<shared_spinlock*>(this)->unlock_exclusive(); }
+      template<typename T>
+      struct adapter
+      {
+        void lock() { reinterpret_cast<T*>(this)->lock_exclusive(); }
+        void unlock() { reinterpret_cast<T*>(this)->unlock_exclusive(); }
+      };
+
+      template<typename T>
+      static auto& adapt(T& sl) { return reinterpret_cast<spinlock_exclusive_adapter::adapter<T>&>(sl); }
   };
 
   /// \brief adapter for lock_guard (shared version)
   class spinlock_shared_adapter
   {
     public:
-      static spinlock_shared_adapter& adapt(shared_spinlock& sl) { return reinterpret_cast<spinlock_shared_adapter&>(sl); }
+      template<typename T>
+      struct adapter
+      {
+        void lock() { reinterpret_cast<T*>(this)->lock_shared(); }
+        void unlock() { reinterpret_cast<T*>(this)->unlock_shared(); }
+      };
 
-      void lock() { reinterpret_cast<shared_spinlock*>(this)->lock_shared(); }
-      void unlock() { reinterpret_cast<shared_spinlock*>(this)->unlock_shared(); }
+      template<typename T>
+      static auto& adapt(T& sl) { return reinterpret_cast<spinlock_shared_adapter::adapter<T>&>(sl); }
   };
+
+  /// \brief migrate a shared lock to an exclusive lock. The unlock return the lock to shared in an atomic operation
+  /// \note please assume the lock operation wasn't atomic (there is sadlly no real way to provide the atomicity of the operation)
+  class spinlock_shared_to_exclusive_adapter
+  {
+    public:
+      template<typename T>
+      struct adapter
+      {
+        void lock() { [[maybe_unused]] const bool _ = reinterpret_cast<T*>(this)->lock_exclusive_unlock_shared(); }
+        void unlock() { reinterpret_cast<T*>(this)->lock_shared_unlock_exclusive(); }
+      };
+
+      template<typename T>
+      static auto& adapt(T& sl) { return reinterpret_cast<spinlock_shared_to_exclusive_adapter::adapter<T>&>(sl); }
+  };
+
 } // namespace neam

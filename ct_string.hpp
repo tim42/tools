@@ -45,22 +45,35 @@ namespace neam
     template<size_t Count>
     struct string_holder
     {
-      consteval string_holder(const char (&_string)[Count])
+      consteval string_holder(const char (&_string)[Count + 1])
       {
-        std::copy_n(_string, Count, string);
+        std::copy_n(_string, Count, str);
       }
       consteval static string_holder from_c_string(const char* _string)
       {
         string_holder ret;
         size_t len = ct::strlen(_string);
-        std::copy_n(_string, len < Count ? len : Count, ret.string);
+        std::copy_n(_string, len < Count ? len : Count, ret.str);
+        return ret;
+      }
+      consteval static string_holder from_c_string_same_size(const char* _string)
+      {
+        string_holder ret;
+        std::copy_n(_string, Count, ret.str);
         return ret;
       }
       consteval string_holder(const string_holder&) = default;
       consteval string_holder() = default;
 
-      char string[Count == 0 ? 1 : Count] = {0};
+      constexpr std::string_view view() const { return {str, size}; }
+
+      char str[Count + 1] = {};
+
+      static constexpr size_t size = Count;
     };
+    // deduction guide for string holder:
+    template<size_t ArraySize>
+    string_holder(const char (&_string)[ArraySize]) -> string_holder<ArraySize - 1>;
 
     /// \brief C-String + Size from array
     struct string
@@ -71,6 +84,8 @@ namespace neam
 
       template<size_t N>
       consteval string(const char (&_str)[N]) noexcept : str(_str), size(N - 1) {}
+      template<size_t N>
+      constexpr string(const string_holder<N>& o) noexcept : str(o.str), size(N) {}
       constexpr string(const string& o) noexcept : str(o.str), size(o.size) {}
       constexpr string(const char* _str, size_t _size) noexcept : str(_str), size(_size) {}
       template<size_t N>
@@ -159,7 +174,7 @@ namespace neam
     struct string_storage_t
     {
       static constexpr string_holder holder {h};
-      static constexpr const char (&string)[sizeof(holder.string)] { holder.string };
+      static constexpr const char (&str)[sizeof(holder.str)] { holder.str };
     };
 
     namespace internal
@@ -199,7 +214,7 @@ namespace neam
 
 /// \brief static storage for a C string litteral. Is a C array. (and thus can be used where size is to be deduced)
 template<neam::ct::string_holder h>
-constexpr const char (&c_string_t)[sizeof(h.string)] = neam::ct::string_storage_t<h>::string;
+constexpr const char (&c_string_t)[sizeof(h.str)] = neam::ct::string_storage_t<h>::str;
 
 #if __has_include(<fmt/format.h>)
 #include <fmt/format.h>
@@ -208,7 +223,17 @@ template<> struct fmt::formatter<neam::ct::string>
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
   template <typename FormatContext>
-  auto format(const neam::ct::string& v, FormatContext& ctx)
+  auto format(const neam::ct::string& v, FormatContext& ctx) const
+  {
+    return fmt::format_to(ctx.out(), "{:{}}", v.str, v.size);
+  }
+};
+template<size_t N> struct fmt::formatter<neam::ct::string_holder<N>>
+{
+  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const neam::ct::string_holder<N>& v, FormatContext& ctx) const
   {
     return fmt::format_to(ctx.out(), "{:{}}", v.str, v.size);
   }

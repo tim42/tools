@@ -67,7 +67,8 @@ namespace neam::memory
 
   namespace cache
   {
-    static constexpr bool k_enable_cache = true;
+    static constexpr bool k_enable_cache = false;
+    static constexpr bool k_poison_cache = false;
     static constexpr uint32_t k_max_page_count = 64;
     static constexpr uint32_t k_max_page_per_allocation = 8;
 
@@ -99,9 +100,18 @@ namespace neam::memory
         cache_entry_t& cache = get_caches().caches[page_count];
         const uint32_t index = cache.insertion_index.fetch_add(1, std::memory_order_acq_rel) % k_max_page_count;
         void* rqpage = nullptr;
-        if (cache.pages[index].compare_exchange_weak(rqpage, page, std::memory_order_acq_rel))
+        if (cache.pages[index].compare_exchange_strong(rqpage, page, std::memory_order_acq_rel))
         {
           cache.entry_count.fetch_add(1, std::memory_order_release);
+
+          memset(page, 0, page_count * get_page_size());
+          if constexpr (k_poison_cache)
+          {
+#ifdef __unix__
+            mprotect(page, page_count * get_page_size(), PROT_NONE);
+#endif
+          }
+
           return true;
         }
       }
@@ -124,13 +134,21 @@ namespace neam::memory
 
         // reading from the cache is constant time too
         // (tho to account for the lack of atomicity between insertion index and entry_count, we have to read a few entries)
-        const uint32_t base_index = cache.insertion_index.load(std::memory_order_acquire) + k_max_page_count - count;
-        for (uint32_t i = 0; i < 2; ++i)
+        const uint32_t base_index = cache.insertion_index.load(std::memory_order_acquire) + k_max_page_count + k_max_page_count - count - 2;
+        for (uint32_t i = 0; i < 4; ++i)
         {
           void* page_ptr = cache.pages[(i + base_index) % k_max_page_count].exchange(nullptr, std::memory_order_acq_rel);
           if (page_ptr)
           {
+            if constexpr (k_poison_cache)
+            {
+#ifdef __unix__
+              mprotect(page_ptr, page_count * get_page_size(), PROT_READ | PROT_WRITE);
+#endif
+            }
+
             memset(page_ptr, 0, page_count * get_page_size());
+
             return page_ptr;
           }
         }
@@ -153,7 +171,7 @@ namespace neam::memory
 
     [[likely]] if (use_pool)
     {
-      void* ptr = cache::get_from_cache(page_count);
+      void* ptr = cache::get_from_cache(page_count - 1);
       if (ptr != nullptr)
         return ptr;
     }
@@ -190,7 +208,7 @@ namespace neam::memory
 
     [[likely]] if (use_pool)
     {
-      if (cache::add_to_cache(page_ptr, page_count))
+      if (cache::add_to_cache(page_ptr, page_count - 1))
         return;
     }
 

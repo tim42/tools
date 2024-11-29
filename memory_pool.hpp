@@ -48,6 +48,7 @@ namespace neam
     {
       public:
         using object_ptr = ObjectType*;
+        using object_type = ObjectType;
 
         // construct an allocated object
         template<typename... Args>
@@ -117,19 +118,47 @@ namespace neam
         }
       };
     }
+
+    template<typename T>
+    using global_object_pool = internal::auto_object_pool<memory_pool<T>>;
+
     template<typename T>
     using auto_pooled_ptr = std::unique_ptr<T, internal::auto_object_pool_deleter<memory_pool<T>>>;
+
     template<typename T, typename... Args>
-    static auto_pooled_ptr<T> make_pooled_ptr(Args&&... args)
+    static auto_pooled_ptr<T> make_auto_pooled_ptr(Args&&... args)
     {
       T* const ptr = new (internal::auto_object_pool<memory_pool<T>>::get_pool().allocate()) T (std::forward<Args>(args)...);
       return auto_pooled_ptr<T>{ ptr };
+    }
+
+    template<typename PoolType>
+    struct object_pool_deleter
+    {
+      void operator()(typename PoolType::object_ptr ptr) const
+      {
+        check::debug::n_assert(pool != nullptr, "pool-deleter: pool pointer of type <...> is nullptr"/*, ct::type_name<PoolType>.view()*/);
+        pool->destruct(ptr);
+        pool->deallocate(ptr);
+      }
+
+      PoolType* pool = nullptr;
+    };
+
+    template<typename T>
+    using pooled_ptr = std::unique_ptr<T, object_pool_deleter<memory_pool<T>>>;
+
+    template<typename T, typename Pool, typename... Args>
+    static pooled_ptr<T> make_pooled_ptr(Pool& pool, Args&&... args)
+    {
+      T* const ptr = new (pool.allocate()) T (std::forward<Args>(args)...);
+      return pooled_ptr<T>{ ptr, object_pool_deleter<memory_pool<T>>{&pool} };
     }
   } // namespace cr
 } // namespace neam
 
 template<typename ObjectType, typename UnderlyingPool, size_t PageCount>
-void *operator new(size_t, neam::cr::memory_pool<ObjectType, UnderlyingPool, PageCount> &pool)
+[[nodiscard]] void* operator new (size_t, neam::cr::memory_pool<ObjectType, UnderlyingPool, PageCount>& pool)
 {
   return pool.allocate();
 }

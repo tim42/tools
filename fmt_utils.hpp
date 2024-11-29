@@ -36,7 +36,7 @@ template<> struct fmt::formatter<std::filesystem::path> : fmt::formatter<std::st
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
   template <typename FormatContext>
-  auto format(const std::filesystem::path& v, FormatContext& ctx)
+  auto format(const std::filesystem::path& v, FormatContext& ctx) const
   {
     return fmt::formatter<std::string>::format((std::string)v, ctx);
   }
@@ -48,14 +48,14 @@ template<typename... Args> struct fmt::formatter<std::tuple<Args...>>
   constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
   template<typename FormatContext>
-  auto format(const std::tuple<Args...>& args, FormatContext& ctx)
+  auto format(const std::tuple<Args...>& args, FormatContext& ctx) const
   {
     fmt::format_to(ctx.out(), "{{");
     return format_it<FormatContext, 0>(args, ctx);
   }
 
   template<typename FormatContext, size_t Idx>
-  auto format_it(const std::tuple<Args...>& args, FormatContext& ctx)
+  auto format_it(const std::tuple<Args...>& args, FormatContext& ctx) const
   {
     if constexpr (Idx >= sizeof...(Args))
       return fmt::format_to(ctx.out(), "}}");

@@ -42,10 +42,11 @@ namespace neam::ct::internal
   };
 
   template<neam::ct::string_holder Str>
-  static constexpr auto& unique_str = unique_str_t<Str>::string.string;
+  static constexpr auto& unique_str = unique_str_t<Str>::string.str;
 
 }
 
+  #define N_USE_TRACY true
 
   #define TRACY_FRAME_MARK FrameMark
   #define TRACY_SCOPED_ZONE ZoneScoped
@@ -77,10 +78,26 @@ namespace neam::ct::internal
 
   #define TRACY_LOG(msg, size) TracyMessage(msg, size, color)
   #define TRACY_LOG_COLOR(msg, size, color) TracyMessageC(msg, size, color)
+
+  #include <source_location>
+
+  constexpr inline tracy::SourceLocationData n_make_tracy_source_loc(std::source_location sloc)
+  {
+    return
+    {
+      .name = "<unnamed-object>",
+      .function = sloc.function_name(),
+      .file = sloc.file_name(),
+      .line = sloc.line(),
+      .color = 0,
+    };
+  }
 #else
   #if !__has_include(<tracy/Tracy.hpp>) && defined(TRACY_ENABLE)
     #error "Tracy should be availlable here"
   #endif
+
+  #define N_USE_TRACY false
 
   #define TRACY_FRAME_MARK
   #define TRACY_SCOPED_ZONE

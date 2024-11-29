@@ -1,9 +1,9 @@
 //
 // created by : Timothée Feuillet
-// date: 2022-5-20
+// date: 2024-3-24
 //
 //
-// Copyright (c) 2022 Timothée Feuillet
+// Copyright (c) 2024 Timothée Feuillet
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -26,15 +26,38 @@
 
 #pragma once
 
-#include <utility> // for to_underlying
+#include <set>
 
-#define N_ENUM_FLAG(Enum)  \
-constexpr static Enum operator~ (Enum a) { return static_cast<Enum>(~std::to_underlying(a)); } \
-constexpr static Enum operator| (Enum a, Enum b) { return static_cast<Enum>(std::to_underlying(a) | std::to_underlying(b)); } \
-constexpr static Enum operator& (Enum a, Enum b) { return static_cast<Enum>(std::to_underlying(a) & std::to_underlying(b)); } \
-constexpr static Enum operator^ (Enum a, Enum b) { return static_cast<Enum>(std::to_underlying(a) ^ std::to_underlying(b)); } \
-constexpr static Enum& operator|= (Enum& a, Enum b) { a = static_cast<Enum>(std::to_underlying(a) | std::to_underlying(b)); return a; } \
-constexpr static Enum& operator&= (Enum& a, Enum b) { a = static_cast<Enum>(std::to_underlying(a) & std::to_underlying(b)); return a; } \
-constexpr static Enum& operator^= (Enum& a, Enum b) { a = static_cast<Enum>(std::to_underlying(a) ^ std::to_underlying(b)); return a; } \
-constexpr static bool has_flag(Enum a, Enum flag) { return (a & flag) == flag; }
+#include "mt_check_base.hpp"
 
+namespace std
+{
+#if !N_ENABLE_MT_CHECK
+  template<class Key, class Compare = std::less<Key>, class Allocator = std::allocator<Key>>
+  using mtc_set = set<Key, Compare, Allocator>;
+#else
+  template<class Key, class Compare = std::less<Key>, class Allocator = std::allocator<Key>>
+  class mtc_set : public set<Key, Compare, Allocator>, public neam::cr::mt_checked<set<Key, Compare, Allocator>>
+  {
+    private:
+      using parent_t = set<Key, Compare, Allocator>;
+
+    public:
+      using set<Key, Compare, Allocator>::set;
+      using set<Key, Compare, Allocator>::operator =;
+
+      N_MTC_WRAP_METHOD(clear, write,)
+      N_MTC_WRAP_METHOD(insert, write,)
+      // N_MTC_WRAP_METHOD(insert_range, write,)
+      N_MTC_WRAP_METHOD(emplace, write,)
+      N_MTC_WRAP_METHOD(emplace_hint, write,)
+      N_MTC_WRAP_METHOD(erase, write,)
+      N_MTC_WRAP_METHOD(swap, write,)
+
+
+      N_MTC_WRAP_METHOD(find, read,)
+      N_MTC_WRAP_METHOD(find, read, const)
+      N_MTC_WRAP_METHOD(contains, read, const)
+  };
+#endif
+}

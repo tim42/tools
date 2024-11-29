@@ -64,6 +64,7 @@ namespace neam
         ~raw_memory_pool_ts()
         {
           free_page(write_page);
+          free_page(next_write_page);
           check::debug::n_assert(is_cleared(), "Destructing a non-cleared pool (remaining: {} objects | object size: {})", get_number_of_object(), object_size);
         }
 
@@ -89,8 +90,10 @@ namespace neam
           const uint64_t required_data_size = page_header_in_object_count * object_size;
           object_offset = required_data_size;
           object_count_per_page = (area_size - required_data_size) / object_size;
+          check::debug::n_assert(object_alignment < 0x6000, "Too many objects per page");
 
           write_page = allocate_page();
+          next_write_page = allocate_page();
         }
 
         /// \brief allocate an element
@@ -98,47 +101,42 @@ namespace neam
         {
           check::debug::n_assert(is_init(), "Trying to allocate on a non-initialized pool.");
 
-          // write_page is assumed to be always valid
-          page_header_t* page = write_page.load(std::memory_order::acquire);
-
+          // write_page/next_write_page are assumed to be always valid
+          page_header_t* page;
           uint32_t index = ~0u;
-          while (true)
           {
-            index = page->write_offset.fetch_add(1, std::memory_order_acq_rel);
-            if (index >= object_count_per_page)
+            // Get the page
+            while (true)
             {
-              // we should almost never go here, unless the allocation for the next page got stuck somewhere
-              page->write_offset.fetch_sub(1, std::memory_order_release);
-              page_header_t* old_page = page;
-              // reload the page:
-              page = write_page.load(std::memory_order::acquire);
-              // if we got a different page, we simply retry with the new page.
-              // otherwise, we grab the next page.
-              if (old_page == page)
               {
-                page_header_t* next_page = page->next.load(std::memory_order_acquire);
-                if (next_page != nullptr)
-                  page = next_page;
-                // no change, yield and reload the page
-                if (page == old_page)
-                {
-                  std::this_thread::yield();
-                  page = write_page.load(std::memory_order::acquire);
-                }
+                // std::lock_guard _lg(spinlock_shared_adapter::adapt(write_page_in_use_lock));
+                page = write_page.load(std::memory_order::acquire);
+                index = page->write_offset.fetch_add(1, std::memory_order_acq_rel);
+                [[likely]] if (index < object_count_per_page)
+                  break;
+                else
+                  page->write_offset.store(object_count_per_page, std::memory_order_release);
               }
-              continue;
-            }
 
-            break;
+              // FIXME: Use umwait
+              while (write_page.load(std::memory_order_relaxed) == page);
+            }
           }
 
+          // Before storing k_page_can_be_freed_marker, so no-one can delete the page from under us
           page->allocation_count.fetch_add(1, std::memory_order_release);
 
-          if (index == 0)
+          if (index == object_count_per_page - 1)
           {
-            write_page.store(page, std::memory_order_release);
-            page_header_t* next_page = (page_header_t*)allocate_page();
-            page->next.store(next_page, std::memory_order_release);
+            // We can only really swap current/next page at this point. This means some threads might wait a bit on page-swap
+            page_header_t* const next_page = next_write_page.exchange(allocate_page(), std::memory_order_acq_rel);
+            write_page.store(next_page, std::memory_order_release);
+
+            {
+              // std::lock_guard _lg(spinlock_exclusive_adapter::adapt(write_page_in_use_lock));
+            }
+            // mark the page as ok for release
+            page->allocation_count.fetch_or(k_page_can_be_freed_marker, std::memory_order_release);
           }
 
           const uint32_t offset = index * object_size + object_offset;
@@ -161,16 +159,12 @@ namespace neam
             check::debug::n_assert(total_count > 0, "Double free/corruption (global|pool object)");
 
             const uint32_t count = chk->allocation_count.fetch_sub(1, std::memory_order_release);
-            check::debug::n_assert(count > 0, "Double free/corruption (page-header)");
-            check::debug::n_assert(count <= object_count_per_page, "Double free/corruption (page-header)");
+            check::debug::n_assert((count & ~k_page_can_be_freed_marker) <= object_count_per_page, "Double free/corruption (page-header)");
 
             // last allocation of the page, free the page (if it cannot receive more allocations
-            [[unlikely]] if (count == 1)
+            [[unlikely]] if (count == (k_page_can_be_freed_marker | 1))
             {
-              if ((chk->write_offset.load(std::memory_order_acquire) & 0x8000) != 0)
-              {
-                free_page(chk);
-              }
+              free_page(chk);
               return;
             }
           }
@@ -194,7 +188,6 @@ namespace neam
           if (!page) return nullptr;
 
           // setup the chunk
-          memset((void*)page, 0, sizeof(page));
           page->init_markers(*this);
 
           return page;
@@ -215,7 +208,6 @@ namespace neam
         struct alignas(8) page_header_t
         {
           uint64_t marker;
-          std::atomic<page_header_t*> next = nullptr;
 
           std::atomic<uint16_t> allocation_count = 0;
           std::atomic<uint16_t> write_offset = 0; // in object
@@ -267,10 +259,18 @@ namespace neam
         size_t object_size = 0; // also contains alignment
         size_t object_offset = 0; // in byte, offset from the start of the page
 
+        static constexpr uint16_t k_page_can_be_freed_marker = 0x8000;
+
         // atomic stuff: (rw, non-correlated data)
         std::atomic<uint32_t> object_count = 0;
 
         std::atomic<page_header_t*> write_page;
+        std::atomic<page_header_t*> next_write_page;
+
+        // Extra safety. Probably not needed as the condition for the race condition to trigger is either not possible or very difficult
+        // (a thread would have to go to sleep right in the page-check loop, and sleep until the last object is initialized and freed)
+        // Uncomment if this happens.
+        // shared_spinlock write_page_in_use_lock;
     };
   } // namespace cr
 } // namespace neam

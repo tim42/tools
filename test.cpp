@@ -9,6 +9,11 @@
 
 #include "hash/fnv1a.hpp"
 
+#if defined(N_ENABLE_LOCK_DEBUG) && N_ENABLE_LOCK_DEBUG
+#warning Building tools with spinlock debug enabled (will lower the perfs and change the memory layout of structs)
+#endif
+
+
 static_assert(std::is_same_v<decltype(neam::ct::hash::fnv1a<32>("coucou")), uint32_t>, "fnv1a: BAD return type");
 static_assert(std::is_same_v<decltype(neam::ct::hash::fnv1a<64>("coucou")), uint64_t>, "fnv1a: BAD return type");
 static_assert(neam::ct::hash::fnv1a<32>("coucou") == 0x0e3318cf, "fnv1a: BAD");
