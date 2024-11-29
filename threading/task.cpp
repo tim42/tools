@@ -151,6 +151,7 @@ namespace neam::threading
 
     {
       marker_to_signal = ptr._get_raw_pointer();
+      ptr.task_group = get_task_group();
     }
   }
 

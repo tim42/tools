@@ -37,6 +37,7 @@
 namespace neam::threading
 {
   class task_manager;
+  class task;
 
 //           std::move_only_function
   using function_t = fu2::unique_function<void()>;
@@ -70,14 +71,18 @@ namespace neam::threading
       bool _is_valid() const { return ptr != nullptr; }
       task_completion_marker_t* _get_raw_pointer() { return ptr; }
 
+      group_t get_task_group() const { return task_group; }
+
     private:
       task_completion_marker_ptr_t(task_completion_marker_t* _ptr, task_manager* _tm) : ptr(_ptr), tm(_tm) {}
 
     private:
       cr::raw_ptr<task_completion_marker_t> ptr;
       task_manager* tm;
+      group_t task_group = k_invalid_task_group;
 
       friend task_manager;
+      friend task;
   };
 }
 

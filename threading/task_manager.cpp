@@ -92,6 +92,7 @@ namespace neam::threading
 
   task_wrapper task_manager::get_task(group_t task_group, function_t&& func)
   {
+    check::debug::n_assert(task_group != k_invalid_task_group, "Trying to create a task from the invalid task group");
     check::debug::n_assert(task_group < frame_state.groups.size(), "Trying to create a task from a task group that does not exists. Did you forgot to create a task group?");
     check::debug::n_check(!frame_state.ensure_on_task_insertion, "task for task-group {} created while the ensure flag is on", task_group);
 
@@ -100,7 +101,9 @@ namespace neam::threading
 
     frame_state.groups[task_group].remaining_tasks.fetch_add(1, std::memory_order_release);
 
-    check::debug::n_assert(frame_state.groups[task_group].is_completed == false, "Trying to create a task from a completed group");
+    // Not exactly exactly and error, but should never happen
+    check::debug::n_check(frame_state.groups[task_group].is_started == false || get_current_group() == task_group, "Code smell: creating a task for a group that has started from a different task-group (task group of the task is: {}, current group is: {})", task_group, get_current_group());
+    check::debug::n_assert(frame_state.groups[task_group].is_completed == false, "Trying to create a task from a completed group (group is {})", task_group);
 
     task* ptr = (task*)transient_tasks.allocate(sizeof(task));
     new (ptr) task(*this, task_group, frame_state.groups[task_group].required_named_thread, frame_state.frame_key, std::move(func));
@@ -121,7 +124,7 @@ namespace neam::threading
 
   task_wrapper task_manager::get_delayed_task(std::chrono::milliseconds delay, function_t&& func)
   {
-    const auto execution_time_point = std::chrono::high_resolution_clock::now() + delay;
+    const auto execution_time_point = clock::now() + delay;
     task_wrapper tw = get_long_duration_task(std::move(func));
     if (!frame_state.frame_lock._get_state() || frame_state.should_stop)
       tw.get_task().execution_time_point = execution_time_point;
@@ -190,7 +193,7 @@ namespace neam::threading
 
     if (t.key == k_non_transient_task_group && has_delay)
     {
-      const auto now = std::chrono::high_resolution_clock::now();
+      const auto now = clock::now();
       if (now < t.execution_time_point)
       {
         TRACY_SCOPED_ZONE;
@@ -284,6 +287,15 @@ namespace neam::threading
       frame_state.threads[it.second].configuration = named_threads_conf.configuration[it.second];
     }
 
+#if N_ENABLE_THREADING_STAT_COLLECTION
+    {
+      frame_state.current_frame_stats.task_groups.resize(max_group + 1);
+      frame_state.last_frame_stats.task_groups.resize(max_group + 1);
+      time_point now = clock::now();;
+      frame_state.frame_start_time_point = now;
+    }
+#endif
+
     frame_state.groups[k_non_transient_task_group].is_started = true;
   }
 
@@ -372,7 +384,7 @@ namespace neam::threading
 
                 if (group_info.remaining_tasks.load(std::memory_order_acquire) == 0)
                 {
-                  const bool has_run_cb = group_info.is_completed.exchange(true, std::memory_order_release);
+                  const bool closing_thread = group_info.is_completed.exchange(true, std::memory_order_release);
 
                   // sanity check
                   // If it hit, please check that you only add tasks to either your own task group
@@ -388,7 +400,7 @@ namespace neam::threading
                   // extra complexity score as we have to lookup stuff
                   ++complexity;
 
-                  if (!has_run_cb && group_info.end_group)
+                  if (!closing_thread && group_info.end_group)
                   {
                     TRACY_SCOPED_ZONE;
                     complexity += k_function_complexity;
@@ -400,7 +412,15 @@ namespace neam::threading
 
                     thread_state().current_gid = previous_gid;
                   }
-
+#if N_ENABLE_THREADING_STAT_COLLECTION
+                  if (!closing_thread)
+                  {
+                    time_point now = clock::now();;
+                    group_info.end_time_point = now;
+                    auto& stats = frame_state.current_frame_stats.task_groups[task_group_to_wait];
+                    stats.end = std::chrono::duration_cast<std::chrono::duration<double>>(now - frame_state.frame_start_time_point).count();
+                  }
+#endif
                   // we need to increment the state as some other chains might be waiting on us
                   // (so we must unlock advance)
                   frame_state.global_state_key.fetch_add(1, std::memory_order_relaxed);
@@ -433,6 +453,15 @@ namespace neam::threading
                 // set the will-start flag before calling the start call-back:
                 group_info.will_start.store(true, std::memory_order_seq_cst);
 
+#if N_ENABLE_THREADING_STAT_COLLECTION
+                {
+                  time_point now = clock::now();;
+                  group_info.start_time_point = now;
+                  auto& stats = frame_state.current_frame_stats.task_groups[task_group_to_execute];
+                  stats.start = std::chrono::duration_cast<std::chrono::duration<double>>(now - frame_state.frame_start_time_point).count();
+                }
+#endif
+
                 // start by executing the callback, so that any wait operation that
                 // can be already present don't immediatly complete. This leave the chance of start_group to add tasks
                 if (group_info.start_group)
@@ -456,6 +485,12 @@ namespace neam::threading
                 check::debug::n_assert(!was_started, "Invalid frame operation: execute_task_group: task group was already started");
 
                 group_info.will_start.store(false, std::memory_order_seq_cst);
+
+                {
+                  tasks_to_run = group_info.tasks_that_can_run.load(std::memory_order_seq_cst);
+                  while (!group_info.tasks_that_can_run.compare_exchange_strong(tasks_to_run, 0, std::memory_order_seq_cst));
+                  frame_state.threads[group_info.required_named_thread].tasks_that_can_run.fetch_add(tasks_to_run, std::memory_order_release);
+                }
 
                 ++chain.index;
 
@@ -490,15 +525,17 @@ namespace neam::threading
     const bool is_general_thread = (thread == k_no_named_thread);
     const bool can_run_general_tasks = !is_general_thread && (conf.can_run_general_tasks);
 
-    task* ptr = get_task_to_run_internal(thread, exclude_long_duration);
+    task* ptr = get_task_to_run_internal(thread, exclude_long_duration, mode);
     if (ptr)
       return ptr;
-    if (((!can_run_general_tasks || mode == task_selection_mode::only_own_tasks) && mode != task_selection_mode::anything) || is_general_thread)
+    if (((!can_run_general_tasks || mode == task_selection_mode::only_own_tasks) && mode != task_selection_mode::anything)
+        || is_general_thread
+        || mode == task_selection_mode::only_current_task_group)
       return nullptr;
-    return get_task_to_run_internal(k_no_named_thread, (!conf.can_run_general_long_duration_tasks && mode != task_selection_mode::anything) || exclude_long_duration);
+    return get_task_to_run_internal(k_no_named_thread, (!conf.can_run_general_long_duration_tasks && mode != task_selection_mode::anything) || exclude_long_duration, mode);
   }
 
-  task* task_manager::get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration)
+  task* task_manager::get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration, task_selection_mode mode)
   {
     if (frame_state.groups.empty() || frame_state.threads[thread].tasks_that_can_run.load(std::memory_order_acquire) == 0)
       return nullptr;
@@ -507,8 +544,9 @@ namespace neam::threading
 
     TRACY_SCOPED_ZONE;
 
+    const group_t current_group = get_current_group();
     start_group += 7691;
-    const group_t start_index = start_group;
+    const group_t start_index = current_group != k_invalid_task_group ? current_group : start_group;
 
     for (group_t i = 0; i < frame_state.groups.size(); ++i)
     {
@@ -518,6 +556,9 @@ namespace neam::threading
       //                          ? k_non_transient_task_group
       //                          : (1 + ((start_index + i) % (frame_state.groups.size() - 1)));
       const group_t group_it = (start_index + i) % frame_state.groups.size();
+
+      if (mode == task_selection_mode::only_current_task_group && group_it != current_group && current_group != k_invalid_task_group)
+        break;
 
       group_info_t& group_info = frame_state.groups[group_it];
 
@@ -579,12 +620,12 @@ namespace neam::threading
   {
     TRACY_SCOPED_ZONE_COLOR(0x00FF00);
 
+    const group_t group = task.get_task_group();
+    [[maybe_unused]] group_info_t& group_info = frame_state.groups[group];
     // Sanity checks:
     {
       const named_thread_t thread = get_current_thread();
-      const group_t group = task.get_task_group();
       [[maybe_unused]] const auto& thread_conf = frame_state.threads[thread].configuration;
-      [[maybe_unused]] group_info_t& group_info = frame_state.groups[group];
 
       if (group != k_non_transient_task_group)
       {
@@ -595,10 +636,9 @@ namespace neam::threading
       }
     }
 
-
     const group_t previous_gid = thread_state().current_gid;
     frame_state.running_tasks.fetch_add(1, std::memory_order_release);
-    thread_state().current_gid = task.get_task_group();
+    thread_state().current_gid = group;
     if (thread_state().current_gid != k_non_transient_task_group)
       frame_state.running_transient_tasks.fetch_add(1, std::memory_order_release);
 
@@ -658,7 +698,7 @@ namespace neam::threading
 
     TRACY_SCOPED_ZONE_COLOR(0xFF0000);
 
-    constexpr uint32_t k_max_spin_count = 15000;
+    constexpr uint32_t k_max_spin_count = 30000;
     constexpr uint32_t k_max_loop_count_before_sleep = 60; // 500us sleep
     constexpr uint32_t k_max_loop_count_before_long_sleep = 120; // 5ms sleep
     constexpr uint32_t k_short_sleep_us = 100;
@@ -718,12 +758,16 @@ namespace neam::threading
     }
   }
 
-  void task_manager::actively_wait_for(group_t group, task_completion_marker_ptr_t&& t)
+  void task_manager::actively_wait_for(task_completion_marker_ptr_t&& t, task_selection_mode mode)
   {
     if (t.is_completed())
       return;
 
     TRACY_SCOPED_ZONE_COLOR(0xFF0000);
+
+    const group_t group = t.get_task_group();
+    check::debug::n_assert(group != k_invalid_task_group, "actively_wait_for: completion-marker has invalid task group");
+
     // This check prevent the most common deadlock pattern where the task calling
     // the function is the one preventing the task's group to be running.
     // Having this check here may trigger in some cases where it shouldn't,
@@ -733,18 +777,17 @@ namespace neam::threading
 
     // we don't use the locked version here to avoid being locked-out during the task execution
     while (!t.is_completed())
-      run_a_task(group != k_non_transient_task_group);
+      run_a_task(mode != task_selection_mode::anything && group != k_non_transient_task_group, mode);
   }
 
-  void task_manager::actively_wait_for(task_wrapper&& tw)
+  void task_manager::actively_wait_for(task_wrapper&& tw, task_selection_mode mode)
   {
-    group_t group = tw->get_task_group();
     task_completion_marker_ptr_t t = tw.create_completion_marker();
     tw = {}; // allow the task to run
-    return actively_wait_for(group, std::move(t));
+    return actively_wait_for(std::move(t), mode);
   }
 
-  std::chrono::microseconds task_manager::run_tasks(std::chrono::microseconds duration)
+  std::chrono::microseconds task_manager::run_tasks(std::chrono::microseconds duration, task_selection_mode mode)
   {
     // number of times we can miss a task before returning
     constexpr uint32_t k_max_unlucky_strikes = 16;
@@ -752,11 +795,11 @@ namespace neam::threading
     uint32_t unlucky_strikes = 0;
     uint32_t task_count = 0;
 
-    const std::chrono::time_point start = std::chrono::high_resolution_clock::now();
+    const std::chrono::time_point start = clock::now();
     while (unlucky_strikes < k_max_unlucky_strikes)
     {
       // grab a random task and run it
-      task* ptr = get_task_to_run(get_current_thread());
+      task* ptr = get_task_to_run(get_current_thread(), false, mode);
       if (ptr)
       {
         do_run_task(*ptr);
@@ -772,7 +815,7 @@ namespace neam::threading
         ++task_count;
       }
 
-      const std::chrono::time_point now = std::chrono::high_resolution_clock::now();
+      const std::chrono::time_point now = clock::now();
       const std::chrono::microseconds elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - start);
 
       // we overshooted, return
@@ -789,7 +832,7 @@ namespace neam::threading
     }
 
     // we could not find a task, so we return early:
-    const std::chrono::time_point now = std::chrono::high_resolution_clock::now();
+    const std::chrono::time_point now = clock::now();
     const std::chrono::microseconds elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - start);
     return elapsed;
   }
@@ -811,6 +854,11 @@ namespace neam::threading
     return false;
   }
 
+  uint32_t task_manager::get_running_tasks_count() const
+  {
+    return frame_state.running_tasks.load(std::memory_order_acquire);
+  }
+
   uint32_t task_manager::get_pending_tasks_count() const
   {
     uint32_t count = 0;
@@ -830,7 +878,7 @@ namespace neam::threading
     if (frame_state.delayed_tasks.delayed_tasks.empty())
       return;
 
-    const auto now = std::chrono::high_resolution_clock::now();
+    const auto now = clock::now();
 
     auto it = frame_state.delayed_tasks.delayed_tasks.begin();
     while (it != frame_state.delayed_tasks.delayed_tasks.end() && (force_push || it->ptr->execution_time_point <= now))
@@ -916,6 +964,34 @@ namespace neam::threading
         frame_state.on_stopped = {};
       }
 
+#if N_ENABLE_THREADING_STAT_COLLECTION
+      {
+        time_point now = clock::now();
+
+        if (min_frame_length > std::chrono::microseconds{0})
+        {
+          if (now - frame_state.frame_start_time_point + std::chrono::microseconds{100} < min_frame_length)
+          {
+            bool need_long_sleep = (now - frame_state.frame_start_time_point) > std::chrono::milliseconds{3};
+            if (need_long_sleep)
+              frame_state.frame_lock.lock();
+            while (now - frame_state.frame_start_time_point + std::chrono::microseconds{100} < min_frame_length)
+            {
+              std::this_thread::sleep_for(min_frame_length - (now - frame_state.frame_start_time_point + std::chrono::microseconds{100}));
+              now = clock::now();
+            }
+            if (need_long_sleep)
+              frame_state.frame_lock.unlock();
+          }
+        }
+
+        frame_state.current_frame_stats.frame_duration = std::chrono::duration_cast<std::chrono::duration<double>>(now - frame_state.frame_start_time_point).count();
+        frame_state.frame_start_time_point = now;
+
+        std::swap(frame_state.current_frame_stats, frame_state.last_frame_stats);
+      }
+#endif
+
       // set a new state key
       // Must be the last operation in order to unlock advance()
       frame_state.global_state_key.fetch_add(1, std::memory_order_release);
@@ -927,6 +1003,20 @@ namespace neam::threading
 
     // done once per frame, after the reset ended
     poll_delayed_tasks();
+  }
+
+  std::string_view task_manager::get_task_group_name(group_t grp) const
+  {
+    if (auto it = frame_ops.debug_names.find(grp); it != frame_ops.debug_names.end())
+      return it->second;
+    return "<invalid task group>";
+  }
+
+  std::string_view task_manager::get_named_thread_name(named_thread_t thid) const
+  {
+    if (auto it = named_threads_conf.debug_names.find(thid); it != named_threads_conf.debug_names.end())
+      return it->second;
+    return "<invalid named thread>";
   }
 }
 

@@ -33,6 +33,7 @@
 #include "types.hpp"
 #include "../debug/assert.hpp"
 #include "../memory_pool.hpp" // for friendship
+#include "../raw_ptr.hpp"
 
 namespace neam::threading
 {
@@ -133,7 +134,7 @@ namespace neam::threading
       uint32_t frame_key = 0;
 
       // only used for long-duration tasks. Is ignored for any other type of tasks.
-      std::chrono::time_point<std::chrono::high_resolution_clock> execution_time_point = {};
+      std::chrono::time_point<std::chrono::steady_clock> execution_time_point = {};
 
       task* tasks_to_notify[k_max_task_to_notify];
       task_completion_marker_t* marker_to_signal = nullptr;
@@ -150,13 +151,12 @@ namespace neam::threading
     public:
       task_wrapper() = default;
       task_wrapper(task& _t) : t(&_t) { t->held_by_wrapper = true; }
-      task_wrapper(task_wrapper&& o) : t(o.t) {o.t = nullptr;}
+      task_wrapper(task_wrapper&& o) = default;
       task_wrapper& operator = (task_wrapper&& o)
       {
         if (&o == this) return *this;
         push_to_run();
-        t = o.t;
-        o.t = nullptr;
+        t = std::move(o.t);
         return *this;
       }
       ~task_wrapper() { push_to_run(); }
@@ -182,13 +182,12 @@ namespace neam::threading
         {
           std::lock_guard<spinlock> _lg(t->lock);
           check::debug::n_assert(t->held_by_wrapper, "incoherent state");
-          t->push_to_run(true);
-          t = nullptr;
+          t.release()->push_to_run(true);
         }
       }
 
     private:
-      task* t = nullptr;
+      cr::raw_ptr<task> t;
   };
 }
 

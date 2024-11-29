@@ -30,6 +30,7 @@
 #include "task.hpp"
 #include "task_group_graph.hpp"
 #include "named_threads.hpp"
+#include "stats.hpp"
 
 #include "../memory_pool.hpp"
 #include "../frame_allocation.hpp"
@@ -39,7 +40,13 @@
 
 #include <chrono>
 #include <atomic>
-#include <deque>
+#include "../mt_check/vector.hpp"
+#include "../mt_check/deque.hpp"
+#include "../mt_check/set.hpp"
+
+#ifndef N_ENABLE_THREADING_STAT_COLLECTION
+#define N_ENABLE_THREADING_STAT_COLLECTION 1
+#endif
 
 namespace neam::threading
 {
@@ -47,6 +54,7 @@ namespace neam::threading
   {
     normal, // as specified in the conf
     only_own_tasks, // if in a named thread, will prevent running any other tasks
+    only_current_task_group, // if in a task, will only run tasks from the current group
     anything, // will allow running any tasks
   };
 
@@ -190,12 +198,7 @@ namespace neam::threading
       ///
       /// \note If called from inside a task, it is incorrect to wait for a task from a different task-group
       ///       as it may lead to a deadlock.
-      void actively_wait_for(group_t group, task_completion_marker_ptr_t&& t);
-
-      void actively_wait_for(task_completion_marker_ptr_t&& t)
-      {
-        return actively_wait_for(get_current_group(), std::move(t));
-      }
+      void actively_wait_for(task_completion_marker_ptr_t&& t, task_selection_mode mode = task_selection_mode::normal);
 
       /// \brief Actively wait for a task to be completed (run tasks untill the task is completed)
       ///        Does not call to wait_for_a_task
@@ -204,7 +207,7 @@ namespace neam::threading
       ///
       /// \note If called from inside a task, it is incorrect to wait for a task from a different task-group
       ///       as it may lead to a deadlock.
-      void actively_wait_for(task_wrapper&& tw);
+      void actively_wait_for(task_wrapper&& tw, task_selection_mode mode = task_selection_mode::normal);
 
       /// \brief run tasks for the specified duration. (wait_for_a_task is not called)
       ///
@@ -213,7 +216,7 @@ namespace neam::threading
       /// \note The system may either undershoot or overshoot the duration.
       /// \note The function may return early if there hasn't been any task to execute for a while
       /// \return the actual elapsed duration (as mesured internally)
-      std::chrono::microseconds run_tasks(std::chrono::microseconds duration);
+      std::chrono::microseconds run_tasks(std::chrono::microseconds duration, task_selection_mode mode = task_selection_mode::normal);
 
       /// \brief Returns whether tasks are pending or not
       /// Only tasks that can be actively executed in the current context are reported
@@ -225,6 +228,10 @@ namespace neam::threading
       /// \brief Return the number of pending tasks
       /// \see has_pending_tasks
       uint32_t get_pending_tasks_count() const;
+
+      /// \brief Return the number of running tasks
+      /// \see has_running_tasks
+      uint32_t get_running_tasks_count() const;
 
       /// \brief Usefull for debugging what is continually inserting tasks when tasks should not be inserted
       void should_ensure_on_task_insertion(bool should_ensure) { frame_state.ensure_on_task_insertion = should_ensure; }
@@ -252,8 +259,32 @@ namespace neam::threading
       [[nodiscard]] task_completion_marker_ptr_t _allocate_completion_marker();
       void _deallocate_completion_marker_ptr(task_completion_marker_ptr_t&& ptr);
 
+    public:
+      /// \brief Return a ref to the last frame stats
+      /// \warning If used in a long-duration context (potentially outside frame boundaries) please make a copy of the return value
+      /// \note Enabled via: N_ENABLE_THREADING_STAT_COLLECTION
+      const stats& get_last_frame_stats() const
+      {
+#if N_ENABLE_THREADING_STAT_COLLECTION
+        return frame_state.last_frame_stats;
+#else
+        // dummy:
+        static stats ret;
+        return ret;
+#endif
+      }
+
+      std::string_view get_task_group_name(group_t grp) const;
+      std::string_view get_named_thread_name(named_thread_t thid) const;
+
     public: // advanced internals
       void _advance_state() { advance(); }
+
+#if N_ENABLE_THREADING_STAT_COLLECTION
+      /// \brief Prevent a frame from having a duration smaller than the specified amount
+      /// \note Locks a single thread and require stat collection
+      std::chrono::microseconds min_frame_length {0};
+#endif
 
     private:
       /// \brief Mark the setup of the task as complete and allow it to run (avoid race-conditions in the setup)
@@ -270,7 +301,7 @@ namespace neam::threading
 
       /// \brief Get a task to run
       /// \note The task is selected in a somewhat random fashion: the first task found is the selected one
-      [[nodiscard]] task* get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration = false);
+      [[nodiscard]] task* get_task_to_run_internal(named_thread_t thread, bool exclude_long_duration = false, task_selection_mode mode = task_selection_mode::normal);
       [[nodiscard]] task* get_task_to_run(named_thread_t thread, bool exclude_long_duration = false, task_selection_mode mode = task_selection_mode::normal);
 
       void reset_state();
@@ -280,6 +311,10 @@ namespace neam::threading
       void do_run_task(task& task);
 
     private:
+      using clock = std::chrono::steady_clock;
+      using time_point = std::chrono::time_point<clock>;
+      using duration = typename time_point::duration;
+
       // Tasks that belong to a task group. Deletion is done at the end of the frame (no need to manually deallocate tasks this way)
       // Tasks allocated this way must have a task group and must run inside the frame it is allocated.
       cr::frame_allocator<8, true> transient_tasks;
@@ -310,6 +345,11 @@ namespace neam::threading
 
         function_t start_group;
         function_t end_group;
+
+#if N_ENABLE_THREADING_STAT_COLLECTION
+        time_point start_time_point;
+        time_point end_time_point;
+#endif
       };
 
       struct chain_info_t
@@ -322,7 +362,7 @@ namespace neam::threading
       struct named_thread_frame_state_t
       {
         named_thread_configuration configuration;
-        std::vector<group_t> groups;
+        std::mtc_vector<group_t> groups;
 
         cr::queue_ts<cr::queue_ts_atomic_wrapper<task*>> long_duration_tasks_to_run;
         std::atomic<uint32_t> tasks_that_can_run = 0;
@@ -334,7 +374,7 @@ namespace neam::threading
         auto operator <=> (const delayed_task_t& o) const
         {
           const auto x = ptr->execution_time_point <=> o.ptr->execution_time_point;
-          [[likely]] if (x != 0)
+          if (x != 0) [[likely]]
             return x;
           return ptr <=> o.ptr;
         }
@@ -343,15 +383,15 @@ namespace neam::threading
       {
         // FIXME: something better (probably bucket-based with very coarse/exponential sorting).
         //        currently, it's so very slow.
-        std::set<delayed_task_t> delayed_tasks;
+        std::mtc_set<delayed_task_t> delayed_tasks;
         spinlock lock; // the contention problem
       };
 
       struct frame_state_t
       {
-        std::deque<group_info_t> groups;
-        std::deque<chain_info_t> chains;
-        std::deque<named_thread_frame_state_t> threads;
+        std::mtc_deque<group_info_t> groups;
+        std::mtc_deque<chain_info_t> chains;
+        std::mtc_deque<named_thread_frame_state_t> threads;
 
         sorted_task_list_t delayed_tasks;
 
@@ -373,6 +413,13 @@ namespace neam::threading
         bool should_stop = false;
         bool ensure_on_task_insertion = false;
         bool should_threads_leave = false; // require the frame-lock to be held, will cause threads to exit
+
+#if N_ENABLE_THREADING_STAT_COLLECTION
+        time_point frame_start_time_point;
+
+        stats last_frame_stats;
+        stats current_frame_stats;
+#endif
       };
       frame_state_t frame_state;
 
