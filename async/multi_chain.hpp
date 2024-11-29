@@ -27,6 +27,7 @@
 #pragma once
 
 #include "chain.hpp"
+#include "../mt_check/mt_check_base.hpp"
 
 namespace neam::async
 {
@@ -36,7 +37,7 @@ namespace neam::async
   /// \brief return a chain that will be called when all the argument chains have completed.
   ///        Argument chains must be continuation_chain that have no callback
   /// \note multi-chain needs dynamic allocation for the state
-  /// \todo put that in a pool, as the state is the same size for each multi-chain
+  /// \note the returned can be cancelled and will forward the cancellation to the parent chains
   template<typename Container>
   continuation_chain multi_chain(Container&& c)
   {
@@ -44,29 +45,47 @@ namespace neam::async
     {
       std::atomic<uint64_t> count;
       typename continuation_chain::state state;
+      std::remove_reference_t<Container> container;
+
+      cr::mt_checker<state_t> checker;
     };
 
     if (!c.size())
       return continuation_chain::create_and_complete();
 
     continuation_chain ret;
-    state_t* state = new state_t {c.size(), ret.create_state() };
+    std::shared_ptr<state_t> state = std::make_shared<state_t>(c.size(), ret.create_state(), std::move(c));
 
     // create the lambda:
     const auto lbd = [state]()
     {
-      --state->count;
-      if (state->count == 0)
+      const uint64_t count = state->count.fetch_sub(1, std::memory_order_acq_rel);
+      if (count == 1)
       {
-        state->state.complete();
-        delete state;
+        {
+          // std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+          state->state.complete();
+        }
       }
     };
 
-    // register in the chains:
-    for (auto& it : c)
+    state->state.on_cancel([state]()
     {
-      it.then(lbd);
+      {
+        // std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+        const uint32_t size = state->container.size();
+        for (uint32_t i = 0; i < size; ++i)
+        {
+          state->container[i].cancel();
+        }
+      }
+    });
+
+    // register in the chains:
+    const uint32_t size = state->container.size();
+    for (uint32_t i = 0; i < size; ++i)
+    {
+      state->container[i].then(lbd);
     }
 
     return ret;
@@ -75,7 +94,7 @@ namespace neam::async
   /// \brief return a chain that will be called when all the argument chains have completed.
   ///        Argument chains must be continuation_chain that have no callback
   /// \note multi-chain needs dynamic allocation for the state
-  /// \todo put that in a pool, as the state is the same size for each multi-chain
+  /// \note the returned can be cancelled and will forward the cancellation to the parent chains
   template<typename... Chains>
   continuation_chain multi_chain_simple(Chains&&... chains)
   {
@@ -83,6 +102,8 @@ namespace neam::async
     {
       std::atomic<uint64_t> count;
       typename continuation_chain::state state;
+      std::tuple<std::remove_reference_t<Chains>...> chains;
+      cr::mt_checker<state_t> checker;
     };
 
     if constexpr (sizeof...(Chains) == 0)
@@ -91,28 +112,43 @@ namespace neam::async
       return (chains,...);
 
     continuation_chain ret;
-    state_t* state = new state_t { sizeof...(Chains), ret.create_state() };
+    std::shared_ptr<state_t> state = std::make_shared<state_t>(sizeof...(Chains), ret.create_state(), std::tuple<std::remove_reference_t<Chains>...> { std::move(chains)... });
 
     // create the lambda:
     const auto lbd = [state]()
     {
-      --state->count;
-      if (state->count == 0)
+      const uint64_t count = state->count.fetch_sub(1, std::memory_order_acq_rel);
+      if (count == 1)
       {
-        state->state.complete();
-        delete state;
+        {
+          std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+          state->state.complete();
+        }
       }
     };
 
+    // allow the chains to be mass cancelled:
+    state->state.on_cancel([state]()
+    {
+      {
+        std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+        std::apply([](auto&&... chn) { (chn.cancel(), ...); }, state->chains);
+      }
+    });
+
     // register in the chains:
-    (chains.then(lbd), ...);
+    // WARNING: referencing state after this is incorrect
+    std::apply([&lbd](auto&& ... chn)
+    {
+      (chn.then(lbd), ...);
+    }, state->chains);
 
     return ret;
   }
 
   /// \brief return a chain that will be called when all the argument chains have completed.
   /// \note multi-chain needs dynamic allocation for the state
-  /// \todo put that in a pool, as the state is the same size for each multi-chain
+  /// \note the returned can be cancelled and will forward the cancellation to the parent chains
   template<typename CbState, typename Container, typename Fnc>
   chain<CbState> multi_chain(CbState&& initial_state, Container&& c, Fnc&& fnc)
   {
@@ -122,30 +158,47 @@ namespace neam::async
       std::atomic<uint64_t> count;
       typename chain<CbState>::state state;
       cb_state_t data;
+      std::remove_reference_t<Container> container;
+      cr::mt_checker<state_t> checker;
     };
 
     if (!c.size())
       return chain<CbState>::create_and_complete(std::move(initial_state));
 
     chain<CbState> ret;
-    state_t* state = new state_t {c.size(), ret.create_state(), std::move(initial_state) };
+    std::shared_ptr<state_t> state = std::make_shared<state_t>(c.size(), ret.create_state(), std::move(initial_state), std::move(c));
 
     // create the lambda:
     const auto lbd = [state, fnc = std::move(fnc)]<typename... Args>(Args&&... args)
     {
       fnc(state->data, std::forward<Args>(args)...);
-      --state->count;
-      if (state->count == 0)
+      const uint64_t count = state->count.fetch_sub(1, std::memory_order_acq_rel);
+      if (count == 1)
       {
-        state->state.complete(std::move(state->data));
-        delete state;
+        {
+          std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+          state->state.complete(std::move(state->data));
+        }
       }
     };
 
-    // register in the chains:
-    for (auto& it : c)
+    state->state.on_cancel([state]()
     {
-      it.then(lbd);
+      {
+        std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+        const uint32_t size = state->container.size();
+        for (uint32_t i = 0; i < size; ++i)
+        {
+          state->container[i].cancel();
+        }
+      }
+    });
+
+    // register in the chains:
+    const uint32_t size = state->container.size();
+    for (uint32_t i = 0; i < size; ++i)
+    {
+      state->container[i].then(lbd);
     }
 
     return ret;
@@ -153,7 +206,7 @@ namespace neam::async
 
   /// \brief return a chain that will be called when all the argument chains have completed.
   /// \note multi-chain needs dynamic allocation for the state
-  /// \todo put that in a pool, as the state is the same size for each multi-chain
+  /// \note the returned can be cancelled and will forward the cancellation to the parent chains
   ///
   /// Accepts chains of different types.
   /// If the chains are different, the provided function should be declared this way:
@@ -167,28 +220,46 @@ namespace neam::async
       std::atomic<uint64_t> count;
       typename chain<CbState>::state state;
       cb_state_t data;
+      std::tuple<std::remove_reference_t<Chains>...> chains;
+      cr::mt_checker<state_t> checker;
     };
 
     if (!sizeof...(Chains))
       return chain<CbState>::create_and_complete(std::move(initial_state));
 
     chain<CbState> ret;
-    state_t* state = new state_t {sizeof...(Chains), ret.create_state(), std::move(initial_state) };
+    std::shared_ptr<state_t> state = std::make_shared<state_t>(sizeof...(Chains), ret.create_state(), std::move(initial_state), std::tuple<std::remove_reference_t<Chains>...>{ std::move(chains)... });
 
     // create the lambda:
     const auto lbd = [state, fnc = std::move(fnc)]<typename... Args>(Args&&... args)
     {
       fnc(state->data, std::forward<Args>(args)...);
-      --state->count;
-      if (state->count == 0)
+      const uint64_t count = state->count.fetch_sub(1, std::memory_order_acq_rel);
+      if (count == 1)
       {
-        state->state.complete(std::move(state->data));
-        delete state;
+        {
+          std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+          state->state.complete(std::move(state->data));
+        }
       }
     };
 
+    // allow the chains to be mass cancelled:
+    state->state.on_cancel([state]()
+    {
+      {
+        std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+        std::apply([](auto&&... chn) { (chn.cancel(), ...); }, state->chains);
+      }
+    });
+
     // register in the chains:
-    (chains.then(lbd), ...);
+    // WARNING: referencing state after this is incorrect
+    std::apply([&lbd](auto&& ... chn)
+    {
+      (chn.then(lbd), ...);
+    }, state->chains);
+
 
     return ret;
   }
