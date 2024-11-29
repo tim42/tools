@@ -30,6 +30,7 @@
   #define N_LOGGER_USE_FMT 1
   #define N_LOGGER_CRIPPLED 0
   #include <fmt/format.h>
+  #include <fmt/ranges.h>
 #elif __has_include(<format>)
   #define N_LOGGER_USE_FMT 0
   #define N_LOGGER_CRIPPLED 0
@@ -45,6 +46,7 @@
 #include <source_location>
 #include <string>
 #include "../spinlock.hpp"
+#include "../ct_string.hpp"
 
 
 #ifndef N_LOGGER_STRIP_DEBUG
@@ -54,6 +56,23 @@
 
 namespace neam::cr
 {
+  /// \brief For filtering stuff
+  /// \tparam StaticallyEnabled allows to compile-out logs that are disabled
+  /// Usage: using my_log_category = neam::cr::log_category<"my_log_category">
+  ///
+  /// \note Some implementations (like hydra) may provide extra wrapping over log_category
+  template<ct::string_holder IDName, bool StaticallyEnabled = true>
+  struct log_category
+  {
+    static constexpr decltype(IDName) category_name = IDName;
+    static constexpr bool is_statically_enabled = StaticallyEnabled;
+
+    // Dynamic toggle. If is_statically_enabled is false, will have no effect.
+    inline static bool is_dynamically_enabled = true;
+
+    static bool is_enabled() { return is_statically_enabled && is_dynamically_enabled; }
+  };
+
   class logger
   {
     public:
@@ -200,7 +219,8 @@ namespace neam::cr
       spinlock lock;
   };
 
-  extern logger out;
+  logger& get_global_logger();
+  logger::log_location_helper out(bool skip_lock = false, std::source_location loc = std::source_location::current());
 
 
   /// \brief Neat callback for cr::logger that prints the output to the console

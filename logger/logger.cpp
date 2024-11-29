@@ -13,7 +13,16 @@
 
 namespace neam::cr
 {
-  logger out;
+  logger& get_global_logger()
+  {
+    static logger out;
+    return out;
+  }
+  logger::log_location_helper out(bool skip_lock, std::source_location loc)
+  {
+    return get_global_logger()(skip_lock, loc);
+  }
+
 
   void logger::log_str(severity s, const std::string& str, std::source_location loc)
   {
@@ -23,6 +32,8 @@ namespace neam::cr
     const auto lines = split_string(str, "\n");
     for (const auto& line : lines)
     {
+      if (callbacks.empty())
+        print_log_to_console(nullptr, s, line, loc);
       for (auto&& it : callbacks)
       {
         it.fnc(it.data, s, line, loc);
