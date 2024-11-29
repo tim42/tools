@@ -37,6 +37,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "../mt_check/deque.hpp"
+#include "../mt_check/unordered_set.hpp"
+#include "../mt_check/unordered_map.hpp"
+#include "../mt_check/vector.hpp"
 #include "../scoped_flag.hpp"
 
 #include "../debug/assert.hpp" // for check::
@@ -640,14 +644,14 @@ namespace neam::io
 
 
       mutable spinlock mapped_lock;
-      std::unordered_map<id_t, std::string> mapped_files;
+      std::mtc_unordered_map<id_t, std::string> mapped_files;
 
 
       mutable spinlock fd_lock;
-      std::unordered_map<id_t, file_descriptor> opened_fd;
-      std::unordered_set<int> fd_to_be_closed; // list of fd to be closed. fd must not be present in opened_fd.
+      std::mtc_unordered_map<id_t, file_descriptor> opened_fd;
+      std::mtc_unordered_set<int> fd_to_be_closed; // list of fd to be closed. fd must not be present in opened_fd.
       mutable spinlock cancel_lock;
-      std::deque<cancel_request> to_be_canceled; // list of operations to cancel
+      std::mtc_deque<cancel_request> to_be_canceled; // list of operations to cancel
 
       request<read_request> read_requests;
       request<write_request> write_requests;

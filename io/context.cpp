@@ -665,9 +665,6 @@ namespace neam::io
     // Send the remaining queries
     process();
 
-    if (has_in_flight_operations())
-      cr::out().debug("_wait_for_submit_queries: waiting in-flight operations...");
-
     unsigned count = 0;
     // wat for everything to be done
     while (has_in_flight_operations())
@@ -684,8 +681,6 @@ namespace neam::io
       if (!wait_for_everything)
         break;
     }
-    if (count > 0)
-      cr::out().debug("_wait_for_submit_queries: processed a total of {} loop", count);
   }
 
   void context::_wait_for_queries()
@@ -715,7 +710,7 @@ namespace neam::io
     for (unsigned i = 0; i < iovec_count; ++i)
     {
       if (iovecs[i].iov_base != nullptr)
-        operator delete ((void*)((uint8_t*)iovecs[i].iov_base - *get_data_offset_for_iovec(i)));
+        raw_data::free_allocated_raw_memory((void*)((uint8_t*)iovecs[i].iov_base - *get_data_offset_for_iovec(i)));
       if (type == type_t::read || type == type_t::recv)
         read_states[i].~state();
       else if (type == type_t::write || type == type_t::send)
@@ -1130,6 +1125,7 @@ namespace neam::io
         // Count the queries for the same file w/ contiguous queries:
         unsigned iovec_count = 1;
         {
+          constexpr size_t max_size_for_merging = 64 * 1024;
           size_t offset = requests.front().offset + requests.front().size;
           for (; iovec_count < requests.size() && iovec_count < k_max_iovec_merge; ++iovec_count)
           {
@@ -1137,11 +1133,14 @@ namespace neam::io
               break;
             if (offset != requests[iovec_count].offset)
               break;
+            if (offset + requests[iovec_count].size >= max_size_for_merging)
+              break;
             offset += requests[iovec_count].size;
           }
         }
 
         // Allocate + fill the query structure:
+        // FIXME: That would be nice to track this memory somewhere
         query* q = query::allocate(fid, query::type_t::read, iovec_count);
         const size_t offset = requests.front().offset;
 
@@ -1156,7 +1155,7 @@ namespace neam::io
           }
           else
           {
-            q->iovecs[i].iov_base = operator new(requests.front().size);
+            q->iovecs[i].iov_base = raw_data::allocate_raw_memory(requests.front().size);
           }
           q->read_states[i] = std::move(requests.front().state);
 
