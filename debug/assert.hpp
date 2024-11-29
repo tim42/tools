@@ -64,7 +64,7 @@ namespace neam::debug
       template<typename... Args>
       static void _assert(std::source_location sloc, const bool test, const char* test_str, fmt::format_string<Args...> message, Args&&... args)
       {
-        [[unlikely]] if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
+        [[unlikely]] if (N_ALLOW_DEBUG && test && cr::get_global_logger().can_log(cr::logger::severity::debug))
         {
           cr::out().log_fmt(cr::logger::severity::debug, sloc, "[ASSERT PASSED: {0}]", test_str);
           return;
@@ -74,7 +74,7 @@ namespace neam::debug
         {
           cr::scoped_counter _sc(thread_waiting);
 
-          auto _sl = cr::out.acquire_lock();
+          auto _sl = cr::get_global_logger().acquire_lock();
           cr::out().log_fmt(cr::logger::severity::critical, sloc, "[ASSERT FAILED: {0}]: {1}", test_str, fmt::format(std::move(message), std::forward<Args>(args)...));
           cr::print_callstack(25, 1, true);
         }
@@ -88,7 +88,7 @@ namespace neam::debug
       template<typename... Args>
       static bool _check(std::source_location sloc, const bool test, const char* test_str, fmt::format_string<Args...> message, Args&&... args)
       {
-        [[unlikely]] if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
+        [[unlikely]] if (N_ALLOW_DEBUG && test && cr:: get_global_logger().can_log(cr::logger::severity::debug))
         {
           cr::out().log_fmt(cr::logger::severity::debug, sloc, "[CHECK  PASSED: {0}]", test_str);
           return test;
@@ -98,7 +98,7 @@ namespace neam::debug
         {
           cr::scoped_counter _sc(thread_waiting);
 
-          auto _sl = cr::out.acquire_lock();
+          auto _sl = cr:: get_global_logger().acquire_lock();
           cr::out().log_fmt(cr::logger::severity::error, sloc, "[CHECK  FAILED: {0}]: {1}", test_str, fmt::format(std::move(message), std::forward<Args>(args)...));
           cr::print_callstack(25, 1, true);
         }
@@ -112,7 +112,7 @@ namespace neam::debug
       static error_type _assert_code(std::source_location sloc, const error_type code, const char* test_str, fmt::format_string<Args...> message, Args&&... args)
       {
         const bool test = !ErrorClass::is_error(code);
-        [[unlikely]] if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
+        [[unlikely]] if (N_ALLOW_DEBUG && test && cr:: get_global_logger().can_log(cr::logger::severity::debug))
         {
           cr::out().log_fmt(cr::logger::severity::debug, sloc, "[ASSERT PASSED: {0} returned {1}: {2}]",
                           test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code));
@@ -123,7 +123,7 @@ namespace neam::debug
         {
           cr::scoped_counter _sc(thread_waiting);
 
-          auto _sl = cr::out.acquire_lock();
+          auto _sl = cr:: get_global_logger().acquire_lock();
           cr::out().log_fmt(cr::logger::severity::critical, sloc,
                           "[ASSERT FAILED: {0} returned {1}: {2}]: {3}",
                           test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code),
@@ -142,7 +142,7 @@ namespace neam::debug
       static error_type _check_code(std::source_location sloc, const error_type code, const char* test_str, fmt::format_string<Args...> message, Args&&... args)
       {
         const bool test = !ErrorClass::is_error(code);
-        [[unlikely]] if (N_ALLOW_DEBUG && test && cr::out.can_log(cr::logger::severity::debug))
+        [[unlikely]] if (N_ALLOW_DEBUG && test && cr:: get_global_logger().can_log(cr::logger::severity::debug))
         {
           cr::out().log_fmt(cr::logger::severity::debug, sloc, "[CHECK  PASSED: {0} returned {1}: {2}]",
                           test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code));
@@ -153,7 +153,7 @@ namespace neam::debug
         {
           cr::scoped_counter _sc(thread_waiting);
 
-          auto _sl = cr::out.acquire_lock();
+          auto _sl = cr:: get_global_logger().acquire_lock();
           cr::out().log_fmt(cr::logger::severity::error, sloc,
                           "[CHECK  FAILED: {0} returned {1}: {2}]: {3}",
                           test_str, ErrorClass::get_code_name(code), ErrorClass::get_description(code),
