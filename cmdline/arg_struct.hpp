@@ -119,13 +119,13 @@ namespace neam::cmdline
             using member = ct::list::get_type<n_metadata_member_list<Struct>, Index>;
             using member_type = typename member::type;
 
-            if (arg_name == member::name.string)
+            if (arg_name == member::name.str)
             {
               if constexpr (helper::from_string<member_type>::is_valid_type)
               {
-                member_at<member_type, member::offset>(data).~member_type();
+                member::extract_from(data).~member_type();
                 bool success = true;
-                new (&member_at<member_type, member::offset>(data))  member_type(helper::from_string<member_type>::convert(arg_value, success));
+                new (&member::extract_from(data))  member_type(helper::from_string<member_type>::convert(arg_value, success));
 
                 if (success)
                   valid = true;
@@ -199,11 +199,11 @@ namespace neam::cmdline
             using member = ct::list::get_type<n_metadata_member_list<Struct>, Index>;
             using member_type = typename member::type;
 
-            std::string name = member::name.string;
+            std::string name = (std::string)member::name.view();
             for (char& c : name) { if (c == '-') c = '_'; }
 
             // print the name:
-            cr::out().log(" --{} (default value: `{}`, type: {})", name, member_at<member_type, member::offset>(v), ct::type_name<member_type>.str);
+            cr::out().log(" --{} (default value: `{}`, type: {})", name, member::extract_from(v), ct::type_name<member_type>.str);
             // print some debug info if availlable:
             if constexpr (ct::list::has_type<std::remove_cvref_t<decltype(member::metadata_tuple())>, metadata::info::metadata>)
             {
@@ -234,7 +234,7 @@ namespace neam::cmdline
           {
             using member = ct::list::get_type<n_metadata_member_list<Struct>, Index>;
 
-            if (name == member::name.string)
+            if (name == member::name.str)
             {
               found = true;
             }
@@ -252,7 +252,7 @@ namespace neam::cmdline
           ([&correct_type, name]<size_t Index>()
           {
             using member = ct::list::get_type<n_metadata_member_list<Struct>, Index>;
-            if (name == member::name.string)
+            if (name == member::name.str)
             {
               if constexpr (std::is_same_v<Type, typename member::type>)
               {
@@ -262,19 +262,6 @@ namespace neam::cmdline
           } .template operator()<Indices>(), ...);
         } (std::make_index_sequence<ct::list::size<n_metadata_member_list<Struct>>> {});
         return correct_type;
-      }
-
-      template<typename MT, size_t Offset>
-      static MT& member_at(Struct& v)
-      {
-        uint8_t* ptr = reinterpret_cast<uint8_t*>(&v);
-        return *reinterpret_cast<MT*>(ptr + Offset);
-      }
-      template<typename MT, size_t Offset>
-      static const MT& member_at(const Struct& v)
-      {
-        const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&v);
-        return *reinterpret_cast<const MT*>(ptr + Offset);
       }
 
     public:
