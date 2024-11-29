@@ -54,13 +54,18 @@ namespace neam::rle
       {
         static_assert(std::is_integral_v<SizeType>, "SizeType must be an integer type");
         *(SizeType*)(ma->allocate(sizeof(SizeType))) = value;
-        return ma->allocate(value);
+        void* ret = ma->allocate(value);
+        if (ret == nullptr)
+        {
+          N_RLE_LOG_FAIL("failed to allocate an entry of size {} (allocator size: {})", value, ma->size());
+        }
+
+        return ret;
       }
 
       raw_data to_raw_data()
       {
-        const size_t size = ma->size();
-        return { raw_data::unique_ptr { ma->give_up_data() }, size};
+        return ma->give_up_data();
       }
 
     private:

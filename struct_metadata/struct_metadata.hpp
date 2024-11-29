@@ -40,10 +40,10 @@
 
 #define N_DECLARE_STRUCT_TYPE_TPL(Struct, ...) using struct_type = Struct<__VA_ARGS__>
 
-#define N_MEMBER_DEF_EX(Struct, Member, ...) ::neam::metadata::internal::member_definition<decltype(Struct::Member), offsetof(Struct, Member), #Member __VA_OPT__(,) __VA_ARGS__>
+#define N_MEMBER_DEF_EX(Struct, Member, ...) ::neam::metadata::internal::member_definition<decltype(Struct::Member), offsetof(Struct, Member), #Member, struct_type __VA_OPT__(,) __VA_ARGS__>
 
 /// \brief Entry in the member_list type of serializable structs
-#define N_MEMBER_DEF(Member, ...) ::neam::metadata::internal::member_definition<decltype(struct_type::Member), offsetof(struct_type, Member), #Member __VA_OPT__(,) __VA_ARGS__>
+#define N_MEMBER_DEF(Member, ...) ::neam::metadata::internal::member_definition<decltype(struct_type::Member), offsetof(struct_type, Member), #Member, struct_type __VA_OPT__(,) __VA_ARGS__>
 
 namespace neam::metadata::internal
 {
@@ -53,13 +53,14 @@ namespace neam::metadata::internal
     using struct_type = std::remove_cv_t<T>;
   };
 
-  template<typename Type, size_t Offset, ct::string_holder Name, auto... ExtraMetadata>
+  template<typename Type, size_t Offset, ct::string_holder Name, typename ParentType, auto... ExtraMetadata>
   struct member_definition
   {
     static constexpr size_t size = sizeof(Type);
     static constexpr size_t offset = Offset;
     using type = std::remove_cv_t<Type>;
     using raw_type = Type;
+    using parent_type = ParentType; // parent struct / class type
     static constexpr bool is_const = std::is_const_v<Type>;
     static constexpr bool is_volatile = std::is_volatile_v<Type>;
     static constexpr ct::string_holder name = Name;
@@ -74,9 +75,23 @@ namespace neam::metadata::internal
     /// usage: type_info.metadata.description ...
     static const inline metadata_t metadata = {};
 
+    using metadata_types = ct::type_list<typename decltype(ExtraMetadata)::metadata...>;
+
     /// \brief easy way for code to iterate over all the different metadata (see cr::for_each (in container_utils.hpp)):
     /// possible usage: cr::for_each(type_info.metadata_tuple, [](auto&& v) { ... });
     static inline std::tuple<typename decltype(ExtraMetadata)::metadata...> metadata_tuple() { return { ExtraMetadata... }; }
+
+    /// \brief extract the member from the parent type
+    static type& extract_from(parent_type& v)
+    {
+      uint8_t* ptr = reinterpret_cast<uint8_t*>(&v);
+      return *reinterpret_cast<type*>(ptr + Offset);
+    }
+    static const type& extract_from(const parent_type& v)
+    {
+      const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&v);
+      return *reinterpret_cast<const type*>(ptr + Offset);
+    }
   };
 }
 

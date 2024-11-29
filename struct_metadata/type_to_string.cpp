@@ -265,9 +265,9 @@ namespace neam::metadata
     }
   };
 
-  void helpers::walk_type(const rle::serialization_metadata& md, const rle::type_metadata& type, rle::decoder& dc, payload_arg_t payload)
+  void helpers::walk_type(const rle::serialization_metadata& md, const rle::type_metadata& type, const rle::type_reference& type_ref, rle::decoder& dc, payload_arg_t payload)
   {
-    return rle::walker<to_string_walker>::walk_type(md, type, dc, payload);
+    return rle::walker<to_string_walker>::walk_type(md, type, type_ref, dc, payload);
   }
 
   void helpers::walk_type_generic(const rle::serialization_metadata& md, const rle::type_metadata& type, rle::decoder& dc, payload_arg_t payload)

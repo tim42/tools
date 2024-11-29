@@ -27,6 +27,7 @@
 #pragma once
 
 #include "../rle/rle.hpp"
+#include "../struct_metadata/extra_metadata.hpp"
 
 namespace neam::rle
 {
@@ -124,14 +125,14 @@ namespace neam::rle
         const rle::type_metadata& root = md.type(md.root);
 
         rle::decoder dc(rd, offset, size);
-        walk_type(md, root, dc, payload);
+        walk_type(md, root, {.hash = md.root}, dc, payload);
         return payload;
       }
 
       /// \brief recurse in a type
-      static void walk_type(const rle::serialization_metadata& md, const rle::type_metadata& type, rle::decoder& dc, payload_arg_t payload)
+      static void walk_type(const rle::serialization_metadata& md, const rle::type_metadata& type, const rle::type_reference& type_ref, rle::decoder& dc, payload_arg_t payload)
       {
-        const uint32_t helper_index = search_for_type_helper(md, type, type.to_generic());
+        const uint32_t helper_index = search_for_type_helper(md, type_ref, type, type.to_generic());
         if (helper_index != ~0u)
         {
           auto* helper = Formatter::get_type_helper(helper_index);
@@ -157,8 +158,9 @@ namespace neam::rle
       }
 
       /// \brief Search for a type helper, and return the index (or ~0u if not found)
-      static uint32_t search_for_type_helper(const rle::serialization_metadata& md, const rle::type_metadata& type, const rle::type_metadata& gen_type)
+      static uint32_t search_for_type_helper(const rle::serialization_metadata& md, const rle::type_reference& type_ref, const rle::type_metadata& type, const rle::type_metadata& gen_type)
       {
+        const id_t helper_id = type_ref.attributes.get<metadata::custom_helper::metadata>();
         const uint32_t helper_count = Formatter::get_type_helper_count();
         uint32_t found = ~0u;
         for (uint32_t i = 0; i < helper_count; ++i)
@@ -166,15 +168,13 @@ namespace neam::rle
           auto* helper = Formatter::get_type_helper(i);
           if (helper == nullptr)
             continue;
-          if ((found == ~0u && rle::are_equivalent(md, helper->target_type, gen_type)))
-          {
-            found = i;
-          }
-          else if (helper->target_type.hash != 0 && helper->target_type == type)
-          {
-            found = i;
+
+          if (helper->helper_custom_id == helper_id && helper_id != id_t::none)
             return i;
-          }
+          else if ((found == ~0u && rle::are_equivalent(md, helper->target_type, gen_type)))
+            found = i;
+          else if (helper->target_type.hash != 0 && helper->target_type == type)
+            return i;
         }
         return found;
       }
@@ -198,7 +198,7 @@ namespace neam::rle
         for (uint32_t i = 0; i < count; ++i)
         {
           safe_call_post(Formatter::on_type_container_pre_entry, ret, md, type, payload, i, count, sub_type);
-          walk_type(md, sub_type, dc, payload);
+          walk_type(md, sub_type, type.contained_types[0], dc, payload);
           safe_call_post(Formatter::on_type_container_post_entry, ret, md, type, payload, i, count, sub_type);
         }
 
@@ -214,7 +214,7 @@ namespace neam::rle
 
         const rle::type_metadata& sub_type = md.type(type.contained_types[index - 1].hash);
         auto ret = safe_call_pre(Formatter::on_type_variant_pre_entry, md, type, payload, index, sub_type);
-        walk_type(md, sub_type, dc, payload);
+        walk_type(md, sub_type, type.contained_types[index - 1], dc, payload);
         safe_call_post(Formatter::on_type_variant_post_entry, ret, md, type, payload, index, sub_type);
       }
       static void walk_type_tuple(const rle::serialization_metadata& md, const rle::type_metadata& type, rle::decoder& dc, payload_arg_t payload)
@@ -228,7 +228,7 @@ namespace neam::rle
         {
           const rle::type_metadata& sub_type = md.type(type.contained_types[i].hash);
           safe_call_post(Formatter::on_type_tuple_pre_entry, ret, md, type, payload, i, count, sub_type);
-          walk_type(md, sub_type, dc, payload);
+          walk_type(md, sub_type, type.contained_types[i], dc, payload);
           safe_call_post(Formatter::on_type_tuple_post_entry, ret, md, type, payload, i, count, sub_type);
         }
         safe_call_post(Formatter::on_type_tuple_post, ret, md, type, payload, count);

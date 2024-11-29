@@ -28,6 +28,8 @@
 
 #include <string>
 #include "../ct_string.hpp"
+#include "../id/string_id.hpp"
+#include "../macro.hpp"
 
 namespace neam::metadata
 {
@@ -48,6 +50,19 @@ namespace neam::metadata
     };
   };
 
+  struct custom_helper
+  {
+    // args:
+    id_t helper = {};
+
+    // serialized data (it's a raw type, fastest serialization code path)
+    using metadata = custom_helper;
+
+    constexpr operator id_t () const { return helper; }
+  };
+#define N_CUSTOM_HELPER(NAME) neam::metadata::custom_helper { .helper = neam::string_id{N_EXP_STRINGIFY(NAME)} }
+
+
   template<typename T>
   struct range
   {
@@ -65,6 +80,14 @@ N_METADATA_STRUCT(neam::metadata::info::metadata)
   <
     N_MEMBER_DEF(description),
     N_MEMBER_DEF(doc_url)
+  >;
+};
+
+N_METADATA_STRUCT(neam::metadata::custom_helper)
+{
+  using member_list = neam::ct::type_list
+  <
+    N_MEMBER_DEF(helper)
   >;
 };
 

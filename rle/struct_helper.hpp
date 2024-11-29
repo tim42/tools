@@ -112,7 +112,7 @@ namespace neam::rle
             if (st != status::success)
             {
               N_RLE_LOG_FAIL("failed to deserialize member of {} (name: {}, type: {})",
-                             ct::type_name<ST>.str, member::name.string, ct::type_name<member_type>.str);
+                             ct::type_name<ST>.str, member::name.str, ct::type_name<member_type>.str);
             }
           }
         }.template operator()<Indices>(), ...);
@@ -222,7 +222,7 @@ namespace neam::rle
         {
           using member = ct::list::get_type<typename n_metadata_member_definitions<T>::member_list, Index>;
           coder<typename member::type>::generate_metadata(mt);
-          contained_types.push_back(mt.ref<typename member::type, member>(member::name.string));
+          contained_types.push_back(mt.ref<typename member::type, member>(member::name.str));
         }.template operator()<Indices>(), ...);
       } (std::make_index_sequence<ct::list::size<typename n_metadata_member_definitions<T>::member_list>> {});
 
@@ -247,6 +247,10 @@ namespace neam::rle
         if (st == status::success)
         {
           default_value = ec.to_raw_data();
+        }
+        else
+        {
+          N_RLE_LOG_FAIL("failed to generate default value for {}: serialization returned a failure", ct::type_name<T>.str);
         }
       }
 

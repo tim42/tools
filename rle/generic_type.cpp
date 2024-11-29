@@ -80,8 +80,8 @@ namespace neam::rle
     }
     else if (mode == type_mode::variant)
     {
-      ec.encode(variant_index);
-      if (variant_index > 0)
+      ec.encode(version_or_variant_index);
+      if (version_or_variant_index > 0)
         memcpy(ec.allocate(data[0].size), data[0].data.get(), data[0].size);
     }
     else if (mode == type_mode::container)
@@ -93,7 +93,7 @@ namespace neam::rle
     else if (mode == type_mode::versioned_tuple || mode == type_mode::tuple)
     {
       if (mode == type_mode::versioned_tuple)
-        ec.encode(version);
+        ec.encode(version_or_variant_index);
       for (const auto& it : data)
         memcpy(ec.allocate(it.size), it.data.get(), it.size);
     }
@@ -117,13 +117,13 @@ namespace neam::rle
       const uint32_t index = dc.decode<uint32_t>().first;
       if (index == 0)
       {
-        return { .mode = type.mode, .type_hash = type.hash, .variant_index = index, .data = {} };
+        return { .mode = type.mode, .type_hash = type.hash, .version_or_variant_index = index, .data = {} };
       }
       else
       {
         return
         {
-          .mode = type.mode, .type_hash = type.hash, .variant_index = index,
+          .mode = type.mode, .type_hash = type.hash, .version_or_variant_index = index,
           .data = cr::construct<std::vector>(get_raw_data_for_type(md, md.type(type.contained_types[index - 1].hash), dc))
         };
       }
@@ -146,7 +146,7 @@ namespace neam::rle
       data.reserve(type.contained_types.size());
       for (const auto& ref : type.contained_types)
         data.push_back(get_raw_data_for_type(md, md.type(ref.hash), dc));
-      return { .mode = type.mode, .type_hash = type.hash, .version = version, .data = std::move(data) };
+      return { .mode = type.mode, .type_hash = type.hash, .version_or_variant_index = version, .data = std::move(data) };
     }
     return { .mode = type_mode::invalid, .type_hash = 0 };
   }
@@ -161,8 +161,8 @@ namespace neam::rle
     }
     else if (mode == type_mode::variant)
     {
-      ec.encode(variant_index);
-      if (variant_index > 0)
+      ec.encode(version_or_variant_index);
+      if (version_or_variant_index > 0)
         data[0].serialize(ec);
     }
     else if (mode == type_mode::container)
@@ -174,7 +174,7 @@ namespace neam::rle
     else if (mode == type_mode::versioned_tuple || mode == type_mode::tuple)
     {
       if (mode == type_mode::versioned_tuple)
-        ec.encode(version);
+        ec.encode(version_or_variant_index);
       for (const auto& it : data)
         it.serialize(ec);
     }
@@ -198,13 +198,13 @@ namespace neam::rle
       const uint32_t index = dc.decode<uint32_t>().first;
       if (index == 0)
       {
-        return { .mode = type.mode, .type_hash = type.hash, .variant_index = index, .data = {} };
+        return { .mode = type.mode, .type_hash = type.hash, .version_or_variant_index = index, .data = {} };
       }
       else
       {
         return
         {
-          .mode = type.mode, .type_hash = type.hash, .variant_index = index,
+          .mode = type.mode, .type_hash = type.hash, .version_or_variant_index = index,
           .data = cr::construct<std::vector>(deserialize(md, md.type(type.contained_types[index - 1].hash), dc))
         };
       }
@@ -227,7 +227,7 @@ namespace neam::rle
       data.reserve(type.contained_types.size());
       for (const auto& ref : type.contained_types)
         data.push_back(deserialize(md, md.type(ref.hash), dc));
-      return { .mode = type.mode, .type_hash = type.hash, .version = version, .data = std::move(data) };
+      return { .mode = type.mode, .type_hash = type.hash, .version_or_variant_index = version, .data = std::move(data) };
     }
 
     return { .mode = type_mode::invalid, .type_hash = 0 };

@@ -40,11 +40,7 @@ namespace neam::rle
     type_mode mode;
     type_hash_t type_hash;
 
-    union
-    {
-      uint32_t version = 0;
-      uint32_t variant_index;
-    };
+    uint32_t version_or_variant_index = 0;
 
     // for raw types: data[0] is the only entry and contains the actual data
     // for containers: data is what contains the container
@@ -70,11 +66,7 @@ namespace neam::rle
     type_mode mode;
     type_hash_t type_hash;
 
-    union
-    {
-      uint32_t version = 0;
-      uint32_t variant_index;
-    };
+    uint32_t version_or_variant_index = 0;
 
     // for raw types: raw_type_data is the only entry and contains the actual data
     // for containers: data is what contains the container

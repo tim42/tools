@@ -63,7 +63,7 @@ namespace neam::metadata
 
     /// \brief Allow the type-helpers to go-back to the standard way to recurse over types
     /// \note This alternative \e will call type-helpers (beware of stack-verflows)
-    void walk_type(const rle::serialization_metadata& md, const rle::type_metadata& type, rle::decoder& dc, payload_arg_t payload);
+    void walk_type(const rle::serialization_metadata& md, const rle::type_metadata& type, const rle::type_reference& type_ref, rle::decoder& dc, payload_arg_t payload);
 
     /// \brief Allow the type-helpers to go-back to the standard way to recurse over types
     /// \note This alternative \e will \e not call type-helpers
@@ -78,6 +78,7 @@ namespace neam::metadata
     struct type_helper_t
     {
       rle::type_metadata target_type;
+      id_t helper_custom_id = id_t::none;
       walk_type_fnc_t walk_type = walk_type_generic;
       get_type_name_fnc_t type_name = nullptr;
     };
@@ -103,12 +104,16 @@ namespace neam::metadata
     template<typename Child>
     class auto_register_to_string_type_helper
     {
+      public:
+        static constexpr id_t get_custom_helper_id() { return id_t::none; }
+
       private:
         static void register_child()
         {
           add_to_string_type_helper(
             {
               Child::get_type_metadata(),
+              Child::get_custom_helper_id(),
               &Child::walk_type,
               Child::get_type_name,
             });
