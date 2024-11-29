@@ -63,7 +63,7 @@ namespace neam
   static constexpr id_t parametrize(id_t id,ct::string_holder<Count>& _str)
   {
     id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, "(");
-    id = (id_t)ct::hash::fnv1a_continue<64, Count>((uint64_t)id, _str.string);
+    id = (id_t)ct::hash::fnv1a_continue<64, Count>((uint64_t)id, _str.str);
     id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, ")");
     return id;
   }
@@ -73,6 +73,10 @@ namespace neam
     id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, str, len);
     id = (id_t)ct::hash::fnv1a_continue<64>((uint64_t)id, ")");
     return id;
+  }
+  static constexpr id_t parametrize(id_t id, std::string_view view)
+  {
+    return parametrize(id, view.data(), view.size());
   }
   /// specialize("/path/to/image.png", "image") is equivalent to "/path/to/image.png:image"
   /// specialize("/path/to/image.png:image", "mipmap") is equivalent to "/path/to/image.png:image:mipmap"
@@ -92,7 +96,7 @@ namespace neam
   template<size_t Count>
   static constexpr id_t specialize(id_t id, const ct::string_holder<Count>& _str)
   {
-    return specialize(id, _str.string);
+    return specialize(id, _str.str);
   }
 
   static constexpr id_t combine(id_t a, id_t b)
@@ -124,21 +128,3 @@ namespace std
     }
   };
 }
-
-#if __has_include(<fmt/format.h>)
-#include <fmt/format.h>
-template <> struct fmt::formatter<neam::id_t>
-{
-  constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
-  template <typename FormatContext>
-  auto format(neam::id_t id, FormatContext& ctx)
-  {
-    if (id == neam::id_t::invalid)
-      return fmt::format_to(ctx.out(), "[id:invalid]");
-    if (id == neam::id_t::none)
-      return fmt::format_to(ctx.out(), "[id:none]");
-    return fmt::format_to(ctx.out(), "[id:0x{:X}]", std::to_underlying(id));
-  }
-};
-#endif

@@ -45,13 +45,15 @@ namespace neam
         cr::frame_allocator<> allocator;
 
         shared_spinlock string_map_lock;
-        std::unordered_map<id_t, std::string_view> string_map;
+        std::unordered_map<id_t, std::string> string_map;
       };
       data_t& get_debug_data() { static data_t x; return x; }
     }
 
     std::string_view register_string(id_t id, std::string_view view)
     {
+      if (view.data() == nullptr)
+        return {};
       auto& data = get_debug_data();
       {
         std::lock_guard _el(spinlock_shared_adapter::adapt(data.string_map_lock));
