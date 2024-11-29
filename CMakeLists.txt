@@ -27,11 +27,14 @@ add_library(ntools
 
     id/string_id.cpp
 
+    async/chain.cpp
+
     threading/task.cpp
     threading/task_group_graph.cpp
     threading/named_threads.cpp
     threading/task_manager.cpp
     threading/types.cpp
+    threading/utilities/rate_limit.cpp
 
     rle/serialization_metadata.cpp
     rle/generic_type.cpp
@@ -40,8 +43,11 @@ add_library(ntools
 
     rpc/rpc.cpp
 
+    mt_check/mt_check_base.cpp
+
     memory.cpp
     sys_utils.cpp
+    backtrace.cpp
 
     ${io_srcs}
     test.cpp
