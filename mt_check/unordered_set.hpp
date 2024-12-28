@@ -33,7 +33,7 @@
 namespace std
 {
 #if !N_ENABLE_MT_CHECK
-  template<class Key, class T, class Hash = std::hash<Key>, class KeyEqual = std::equal_to<Key>, class Allocator = std::allocator<Key>>
+  template<class Key, class Hash = std::hash<Key>, class KeyEqual = std::equal_to<Key>, class Allocator = std::allocator<Key>>
   using mtc_unordered_set = unordered_set<Key, Hash, KeyEqual, Allocator>;
 #else
   template<class Key, class Hash = std::hash<Key>, class KeyEqual = std::equal_to<Key>, class Allocator = std::allocator<Key>>
