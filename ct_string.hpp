@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2016 Timothée Feuillet
+// Copyright (c) 2012-2016 Timothï¿½e Feuillet
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +27,6 @@
 #include <memory>
 #include <vector>
 #include <stdexcept>
-
 
 #define _SL_STRINGIZE(x) #x
 #define STRINGIZE(x) _SL_STRINGIZE(x)
@@ -66,6 +65,7 @@ namespace neam
       consteval string_holder() = default;
 
       constexpr std::string_view view() const { return {str, size}; }
+      constexpr operator std::string_view() const { return view(); }
 
       char str[Count + 1] = {};
 
