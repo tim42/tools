@@ -52,7 +52,7 @@ namespace neam::io::network
     void close();
 
     /// \brief Called _after_ the socket has been closed and all requests cancelled
-    cr::event<> on_close;
+    cr::event<> on_close {};
 
     /// \brief Helper for sending data through the connection
     context::write_chain queue_send(raw_data&& data, uint32_t offset_in_data = 0);
