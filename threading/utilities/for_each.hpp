@@ -98,7 +98,7 @@ namespace neam::threading
     // Prevent leaving the function before final_task is done,
     // thus keeping alive all the variables that are in the lambda capture
 
-    // Simply wait for the final task (everything has been/is being processed, and we simply have to wait for the dipatched tasks to complete)
+    // Simply wait for the final task (everything has been/is being processed, and we simply have to wait for the dispatched tasks to complete)
     tm.actively_wait_for(std::move(done), threading::task_selection_mode::only_current_task_group);
   }
 }

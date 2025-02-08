@@ -89,6 +89,10 @@ namespace neam::threading
 
       void _flush_all_delayed_tasks();
 
+      /// \brief Helper to assert immediately when a task-manager hang is occurring
+      /// \note Will only assert if the thread enter the wait state
+      void set_max_threads_that_can_wait_before_assert(uint32_t max) { max_threads_that_can_wait_before_assert = max; }
+
     public: // task group stuff. WARNING MUST BE CALLED BEFORE ANY CALL TO get_task()
       /// \brief Add the compiled frame operations
       /// \warning MUST BE CALLED BEFORE ANY OTHER OPERATION CAN BE DONE ON THE task_manager
@@ -296,8 +300,7 @@ namespace neam::threading
       void destroy_task(task& t);
 
       // Try to advance the frame-state
-      // Return true if a task was executed in the process of advancing the graph
-      bool advance();
+      void advance();
 
       /// \brief Get a task to run
       /// \note The task is selected in a somewhat random fashion: the first task found is the selected one
@@ -329,6 +332,8 @@ namespace neam::threading
 
       resolved_graph frame_ops;
       resolved_threads_configuration named_threads_conf;
+
+      uint32_t max_threads_that_can_wait_before_assert = ~0u;
 
       struct group_info_t
       {
@@ -398,15 +403,19 @@ namespace neam::threading
         std::atomic<uint32_t> running_tasks = 0;
         std::atomic<uint32_t> running_transient_tasks = 0;
         std::atomic<uint32_t> ended_chains = 0;
+        std::atomic<uint64_t> waiting_threads_mask = 0;
+        std::atomic<uint32_t> waiting_threads_count = 0;
 
         // so we can avoid spinning the advance function and instead wait
         std::atomic<uint32_t> global_state_key = 0;
 
         std::atomic<uint32_t> frame_key = 0;
+        std::atomic<bool> need_reset = false;
 
         // used to stop the frame from progressing
         // (usefull during the boot process)
         spinlock frame_lock;
+        shared_spinlock advance_lock;
 
         mutable shared_spinlock stopping_lock; // protects on-stopped and should-stop
         function_t on_stopped;
