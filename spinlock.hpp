@@ -322,6 +322,19 @@ namespace neam
         return true;
       }
 
+      bool try_lock_shared()
+      {
+        if (exclusive_lock._get_state())
+          return false;
+        shared_count.fetch_add(1, std::memory_order_acquire);
+        if (exclusive_lock._get_state())
+        {
+          shared_count.fetch_sub(1, std::memory_order_release);
+          return false;
+        }
+        return true;
+      }
+
       void lock_shared()
       {
         // wait for the exclusive lock to be release:
@@ -351,6 +364,10 @@ namespace neam
         }
 #endif
       }
+
+      /// \brief Return the state of the exclusive lock
+      /// \note May also indicate that a thread is waiting to acquire the lock
+      bool _get_exclusive_state() const { return exclusive_lock._get_state(); }
 
     private:
       spinlock exclusive_lock;
