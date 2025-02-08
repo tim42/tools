@@ -37,6 +37,10 @@
 
 #include "context.hpp"
 
+#ifndef NEAM_IO_SKIP_WRITES
+// if 1, writes to /dev/null (which ignores the writes)
+#define NEAM_IO_SKIP_WRITES 0
+#endif
 
 namespace neam::io
 {
@@ -122,7 +126,7 @@ namespace neam::io
     const uint64_t u64id = (uint64_t)fid;
     if (u64id & k_external_id_flag)
     {
-      const file_descriptor fd = *reinterpret_cast<file_descriptor*>(&fid);
+      const auto fd = std::bit_cast<file_descriptor>(fid);
       return fmt::format("external:[fd: {} | type: {}{}{} | caps: {}{}{}]",
                                      fd.fd,
                                      fd.socket ? "s" : "", fd.pipe ? "p" : "", fd.file ? "f" : "",
@@ -848,7 +852,12 @@ namespace neam::io
         }
 
         neam::cr::out().debug("io::context::open_file: reopening {} with a different mode", fid);
+#if NEAM_IO_SKIP_WRITES
+        if (read)
+          read = read || it->second.read;
+#else
         read = read || it->second.read;
+#endif
         write = write || it->second.write;
         truncate = false;
 
@@ -889,8 +898,11 @@ namespace neam::io
       if (truncate || force_truncate)
         flags |= O_TRUNC;
 
-//       const int fd = check::unx::n_check_code(open(it->second.c_str(), flags, 0644), "Failed to open {}", it->second.c_str());
+#if NEAM_IO_SKIP_WRITES
+      const int fd = open(!read && write ? "/dev/null" : it->second.c_str(), flags, 0644);
+#else
       const int fd = open(it->second.c_str(), flags, 0644);
+#endif
       if (offset != 0) // restore the offset
         lseek(fd, offset, SEEK_SET);
       neam::cr::out().debug("io::context::open_file: opening `{}` [read: {}, write: {}, fd: {}]", it->second.c_str(), read, write, fd);
