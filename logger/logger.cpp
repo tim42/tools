@@ -86,10 +86,15 @@ namespace neam::cr
       case neam::cr::logger::severity::critical: style = critical; color = critical_color; break;
     }
 
+    static spinlock console_out_lock;
+
     std::string msg_str = format_log_to_string(s, msg, loc);
     TRACY_LOG_COLOR(msg_str.data(), msg_str.size(), color);
-    fmt::print(style, "{}", msg_str);
-    fmt::print(fmt::text_style{}, "\n"); // reset style to the term default (avoid leaving with red everywhere in case of a critical error)
+    {
+      std::lock_guard _l(console_out_lock);
+      fmt::print(style, "{}", msg_str);
+      fmt::print(fmt::text_style{}, "\n"); // reset style to the term default (avoid leaving with red everywhere in case of a critical error)
+    }
   }
 #endif
 }
