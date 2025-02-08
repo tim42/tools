@@ -30,7 +30,7 @@
 #include <cstdint>
 
 // waiting for std::move_only_function to be availlable, here is a ~drop-in replacement
-#include "../async/internal_do_not_use_cpp23_replacement/function2.hpp"
+#include "../move_only_function/move_only_function.hpp"
 #include "../raw_ptr.hpp"
 
 
@@ -39,8 +39,7 @@ namespace neam::threading
   class task_manager;
   class task;
 
-//           std::move_only_function
-  using function_t = fu2::unique_function<void()>;
+  using function_t = std::move_only_function<void()>;
 
   using group_t = uint8_t;
   static constexpr group_t k_non_transient_task_group = 0;

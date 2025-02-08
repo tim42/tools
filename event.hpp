@@ -75,9 +75,9 @@ namespace neam::cr
       }
 
     private:
-      event_token_t(fu2::unique_function<void(event_token_t&)>&& d, uint64_t k) : destruct(std::move(d)), key(k) {}
+      event_token_t(std::move_only_function<void(event_token_t&)>&& d, uint64_t k) : destruct(std::move(d)), key(k) {}
 
-      fu2::unique_function<void(event_token_t&)> destruct;
+      std::move_only_function<void(event_token_t&)> destruct;
       uint64_t key = 0;
 
       template<typename... Args> friend class event;
@@ -256,13 +256,13 @@ namespace neam::cr
   ///
   /// \note memory is never freed automatically (unless destructed)
   template<typename... Args>
-  class event : public raw_event<fu2::unique_function<void(Args...)>>
+  class event : public raw_event<std::move_only_function<void(Args...)>>
   {
     private:
-      using parent_t = raw_event<fu2::unique_function<void(Args...)>>;
+      using parent_t = raw_event<std::move_only_function<void(Args...)>>;
 
     public:
-      using function_t = fu2::unique_function<void(Args...)>;
+      using function_t = std::move_only_function<void(Args...)>;
 
       /// \brief Call the event and all the registered entries
       void operator()(Args... args) { return call(args...); }

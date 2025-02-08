@@ -43,7 +43,7 @@
 #endif
 
 // waiting for std::move_only_function to be availlable, here is a ~drop-in replacement
-#include "internal_do_not_use_cpp23_replacement/function2.hpp"
+#include "../move_only_function/move_only_function.hpp"
 
 #if N_ASYNC_USE_TASK_MANAGER
 #define N_ASYNC_FWD_PARAMS tm, group_id,
@@ -70,7 +70,7 @@ namespace neam::async
     struct shared_cancellation_state_t : std::enable_shared_from_this<shared_cancellation_state_t>
     {
       spinlock lock;
-      fu2::unique_function<void()> on_cancel_cb;
+      std::move_only_function<void()> on_cancel_cb;
 
       // for bubbling cancel and stuff.
       std::weak_ptr<shared_cancellation_state_t> prev_state;
@@ -134,7 +134,7 @@ namespace neam::async
       // Internal data for the chain/state combo.
       struct shared_state_t : internal::shared_cancellation_state_t
       {
-        fu2::unique_function<void(Args...)> on_completed;
+        std::move_only_function<void(Args...)> on_completed;
         completed_args_t completed_args; // Just in case of completion before completed is ever set
 
         std::weak_ptr<indirection_t> chain_indirection;
@@ -179,7 +179,7 @@ namespace neam::async
 
           void complete(Args... args)
           {
-            fu2::unique_function<void(Args...)> local_on_completed;
+            std::move_only_function<void(Args...)> local_on_completed;
 #if N_ASYNC_USE_TASK_MANAGER
             threading::task_manager* local_tm = nullptr;
             threading::group_t local_group_id = threading::k_invalid_task_group;
@@ -206,7 +206,7 @@ namespace neam::async
                 {
                   // For multi-completable states, we have to call them with the lock held (and cannot use the task manager).
 #if N_ASYNC_USE_TASK_MANAGER
-                  check::debug::n_assert(internal_state->tm == nullptr, "state::complete(): multi-completable states cannot use the task manager");
+                  // check::debug::n_assert(internal_state->tm == nullptr, "state::complete(): multi-completable states cannot use the task manager");
 #endif
                   TRACY_SCOPED_ZONE;
                   const internal::state_t old_state = internal::get_thread_state();
@@ -233,7 +233,7 @@ namespace neam::async
               }
               else // no on_completed set, use completed_args
               {
-                check::debug::n_assert(!internal_state->multi_completable, "state::complete() multicompletable chain doesn't have a completion set and has already been completed.");
+                check::debug::n_assert(!internal_state->multi_completable || !internal_state->completed_args, "state::complete() multicompletable chain doesn't have a completion set and has already been completed.");
                 internal_state->completed_args.emplace(std::forward<Args>(args)...);
                 clear_internal_state = true;
               }

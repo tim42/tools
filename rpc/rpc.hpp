@@ -29,8 +29,7 @@
 #include <map>
 #include <tuple>
 
-// waiting for std::move_only_function to be availlable, here is a ~drop-in replacement
-#include "../async/internal_do_not_use_cpp23_replacement/function2.hpp"
+#include "../move_only_function/move_only_function.hpp"
 
 #include "../logger/logger.hpp"
 #include "../rle/rle.hpp"
@@ -69,7 +68,7 @@ namespace neam::rpc
 {
   namespace internal
   {
-    using function_t = fu2::unique_function<void(raw_data&&, uint64_t)>;
+    using function_t = std::move_only_function<void(raw_data&&, uint64_t)>;
     adapter_base* get_current_adapter();
     void set_current_adapter(adapter_base* ab);
 

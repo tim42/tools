@@ -79,7 +79,7 @@ if(MSVC)
   set(NTOOLS_FLAGS /W4 /WX /std:c++latest)
 else()
   # It has to be 2b or kdevelop refuses to parse .cpp files
-  set(NTOOLS_FLAGS -Wall -Wextra -std=gnu++2b -Wno-invalid-offsetof  -Wno-unused-parameter)
+  set(NTOOLS_FLAGS -Wall -Wextra -std=gnu++2b -Wno-tautological-compare -Wno-invalid-offsetof  -Wno-unused-parameter)
 endif()
 
 target_compile_options(ntools PRIVATE ${NTOOLS_FLAGS})
