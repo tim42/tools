@@ -87,4 +87,33 @@ namespace neam::cr
         last;
     return {first, last};
   }
+
+  template<typename Cont, typename Type>
+  auto find(const Cont& c, Type&& t)
+  {
+    return std::find(c.begin(), c.end(), std::forward<Type>(t));
+  }
+
+  template<typename Cont, typename Type>
+  auto find(Cont& c, Type&& t)
+  {
+    return std::find(c.begin(), c.end(), std::forward<Type>(t));
+  }
+
+  template<typename Cont, typename Type>
+  bool contains(const Cont& c, Type&& t)
+  {
+    return find(c, std::forward<Type>(t)) != c.end();
+  }
+
+  template<typename ContA, typename ContB>
+  void insert_back(ContA& a, ContB&& b)
+  {
+    a.insert(a.end(), b.begin(), b.end());
+  }
+  template<typename ContA, typename ContB>
+  void insert(ContA& a, ContB&& b)
+  {
+    a.insert(b.begin(), b.end());
+  }
 }
