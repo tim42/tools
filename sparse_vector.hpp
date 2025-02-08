@@ -89,7 +89,7 @@ namespace neam::cr
       {
         if (first_free_index == k_no_free_index)
         {
-          elements.emplace_back(std::forward<Args>(args)...);
+          new (&elements.emplace_back().as_data()) Type{std::forward<Args>(args)...};
           return (uint32_t)elements.size() - 1;
         }
 
@@ -97,7 +97,7 @@ namespace neam::cr
         first_free_index = elements[index].as_index();
         free_entry_count -= 1;
 
-        new (&elements[index].as_data()) Type(std::forward<Args>(args)...);
+        new (&elements[index].as_data()) Type{std::forward<Args>(args)...};
         return index;
       }
 
@@ -114,7 +114,7 @@ namespace neam::cr
 
       void clear()
       {
-        if constexpr (!std::is_trivially_destructible_v<Type>())
+        if constexpr (!std::is_trivially_destructible_v<Type>)
         {
           const std::set<uint32_t> free_indices = compute_free_indices_list();
 
