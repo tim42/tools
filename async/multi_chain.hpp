@@ -95,6 +95,73 @@ namespace neam::async
   ///        Argument chains must be continuation_chain that have no callback
   /// \note multi-chain needs dynamic allocation for the state
   /// \note the returned can be cancelled and will forward the cancellation to the parent chains
+  template<template<typename X> class ResultContainer, template<typename X> class Container, typename T>
+  chain<ResultContainer<T>> multi_chain(Container<chain<T>>&& c)
+  {
+    struct state_t
+    {
+      std::atomic<uint64_t> count;
+      typename chain<ResultContainer<T>>::state state;
+      std::remove_reference_t<Container<chain<T>>> container;
+
+      spinlock results_lock;
+      ResultContainer<std::optional<T>> results;
+      cr::mt_checker<state_t> checker;
+    };
+
+    if (!c.size())
+      return chain<ResultContainer<T>>::create_and_complete({});
+
+    chain<ResultContainer<T>> ret;
+    std::shared_ptr<state_t> state = std::make_shared<state_t>(c.size(), ret.create_state(), std::move(c));
+    state->results.resize(state->container.size());
+
+    // create the lambda:
+    const auto lbd = [state](uint32_t idx, T&& x)
+    {
+      {
+        std::lock_guard lg{state->results_lock};
+        state->results[idx].emplace(std::move(x));
+      }
+      const uint64_t count = state->count.fetch_sub(1, std::memory_order_acq_rel);
+      if (count == 1)
+      {
+        {
+          // std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+          ResultContainer<T> results;
+          for (auto& it : state->results)
+            results.emplace_back(std::move(*it));
+          state->state.complete(std::move(results));
+        }
+      }
+    };
+
+    state->state.on_cancel([state]()
+    {
+      {
+        // std::lock_guard _lg { neam::cr::mt_checker_write_guard_adapter::adapt(state->checker) };
+        const uint32_t size = state->container.size();
+        for (uint32_t i = 0; i < size; ++i)
+        {
+          state->container[i].cancel();
+        }
+      }
+    });
+
+    // register in the chains:
+    const uint32_t size = state->container.size();
+    for (uint32_t i = 0; i < size; ++i)
+    {
+      state->container[i].then([i, lbd](T&&x) { lbd(i, std::move(x)); });
+    }
+
+    return ret;
+  }
+
+  /// \brief return a chain that will be called when all the argument chains have completed.
+  ///        Argument chains must be continuation_chain that have no callback
+  /// \note multi-chain needs dynamic allocation for the state
+  /// \note the returned can be cancelled and will forward the cancellation to the parent chains
   template<typename... Chains>
   continuation_chain multi_chain_simple(Chains&&... chains)
   {

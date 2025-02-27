@@ -203,6 +203,13 @@ namespace neam
         return lock_flag.test(std::memory_order_relaxed);
       }
 
+    public: // debug API
+#if N_ENABLE_LOCK_DEBUG
+      [[nodiscard]] bool _debug_is_lock_held_by_current_thread() const
+      {
+        return _get_state() && (owner_id == std::this_thread::get_id());
+      }
+#endif
     private:
       std::atomic_flag lock_flag = ATOMIC_FLAG_INIT;
 #if N_ENABLE_LOCK_DEBUG
@@ -368,7 +375,13 @@ namespace neam
       /// \brief Return the state of the exclusive lock
       /// \note May also indicate that a thread is waiting to acquire the lock
       bool _get_exclusive_state() const { return exclusive_lock._get_state(); }
-
+      bool _get_shared_state() const { return shared_count.load(std::memory_order_acquire) > 0; }
+#if N_ENABLE_LOCK_DEBUG
+      [[nodiscard]] bool _debug_is_exclusive_lock_held_by_current_thread() const
+      {
+        return exclusive_lock._debug_is_lock_held_by_current_thread();
+      }
+#endif
     private:
       spinlock exclusive_lock;
       std::atomic<int32_t> shared_count = 0;
@@ -383,6 +396,7 @@ namespace neam
       struct adapter
       {
         void lock() { reinterpret_cast<T*>(this)->lock_exclusive(); }
+        bool try_lock() { return reinterpret_cast<T*>(this)->try_lock_exclusive(); }
         void unlock() { reinterpret_cast<T*>(this)->unlock_exclusive(); }
       };
 
@@ -398,6 +412,7 @@ namespace neam
       struct adapter
       {
         void lock() { reinterpret_cast<T*>(this)->lock_shared(); }
+        bool try_lock() { return reinterpret_cast<T*>(this)->try_lock_shared(); }
         void unlock() { reinterpret_cast<T*>(this)->unlock_shared(); }
       };
 

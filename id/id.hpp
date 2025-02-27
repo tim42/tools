@@ -98,6 +98,10 @@ namespace neam
   {
     return specialize(id, _str.str);
   }
+  static constexpr id_t specialize(id_t id, std::string_view view)
+  {
+    return specialize(id, view.data(), view.size());
+  }
 
   static constexpr id_t combine(id_t a, id_t b)
   {

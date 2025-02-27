@@ -38,31 +38,36 @@ namespace neam
 {
   namespace cr
   {
-    /// \brief A struct holding a reference
+    /// \brief A struct holding a reference (reassignable, but cannot hold nullptr)
     template<typename Type>
-    struct ref
+    class ref
     {
-      constexpr ref(Type &_value) noexcept : value(_value) {}
+      public:
+        constexpr ref(Type& _value) noexcept : value(&_value) {}
+        constexpr ref(const ref& o) noexcept = default;
+        constexpr ref& operator=(const ref& o) noexcept = default;
+        constexpr ref& operator=(Type& o) noexcept
+        {
+          value = &o;
+          return *this;
+        }
 
-      operator Type& () & { return value; }
-      operator Type&& () && { return value; }
-      operator const Type& () const & { return value; }
-      operator const Type&& () const && { return value; }
+        ~ref() = default;
 
-      Type &value;
+        operator Type& () & { return *value; }
+        operator Type&& () && { return *value; }
+        operator const Type& () const & { return *value; }
+        operator const Type&& () const && { return *value; }
+
+        template<typename X> requires(std::is_convertible_v<Type&, X&>) operator ref<X> () const { return *value; }
+
+        Type* operator -> () { return value; }
+        const Type* operator -> () const { return value; }
+
+        auto operator <=>(const ref& o) const = default;
+      private:
+        Type* value;
     };
-
-    // helpers
-    template<typename RefType>
-    constexpr ref<RefType> make_ref(RefType&& value)
-    {
-      return ref<std::decay_t<RefType>>(std::forward<RefType>(value));
-    }
-
-    // type traits
-    template<typename X> struct is_ref : public std::false_type {};
-    template<typename T> struct is_ref<ref<T>> : public std::true_type {};
-
   } // namespace cr
 } // namespace neam
 
