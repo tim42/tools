@@ -45,13 +45,13 @@ namespace neam
       {
         using fnv_return_types = type_list<uint32_t, uint64_t>;
 
-        template<typename T> static constexpr T fnv_offset_basis = T();
-        template<> constexpr uint64_t fnv_offset_basis<uint64_t> = 0xcbf29ce484222325ul;
-        template<> constexpr uint32_t fnv_offset_basis<uint32_t> = 0x811c9dc5u;
+        template<typename T> inline constexpr T fnv_offset_basis = T();
+        template<> inline constexpr uint64_t fnv_offset_basis<uint64_t> = 0xcbf29ce484222325ul;
+        template<> inline constexpr uint32_t fnv_offset_basis<uint32_t> = 0x811c9dc5u;
 
-        template<typename T> static constexpr T fnv_prime = T();
-        template<> constexpr uint64_t fnv_prime<uint64_t> = 0x100000001b3ul;
-        template<> constexpr uint32_t fnv_prime<uint32_t> = 0x01000193u;
+        template<typename T> inline constexpr T fnv_prime = T();
+        template<> inline constexpr uint64_t fnv_prime<uint64_t> = 0x100000001b3ul;
+        template<> inline constexpr uint32_t fnv_prime<uint32_t> = 0x01000193u;
       } // namespace internal
 
       template<size_t BitCount, typename T>
