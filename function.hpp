@@ -95,7 +95,7 @@ namespace neam
     // /// ///
 
     template<typename FunctionType>
-    struct function_traits : public function_traits<decltype(&FunctionType::operator())>
+    struct function_traits : public function_traits<decltype(&std::remove_cvref_t<FunctionType>::operator())>
     {
 //       static constexpr bool is_function = false;
 // #ifdef IN_IDE_PARSER
