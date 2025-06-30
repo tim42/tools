@@ -101,8 +101,9 @@ template<typename T> using n_metadata_member_list = typename n_metadata_member_d
 
 namespace neam::metadata
 {
+  /// \brief Iterate over all the members of a given structure
   template<typename StructType, typename Func>
-  void for_each_member(Func&& fnc)
+  constexpr void for_each_member(Func&& fnc)
   {
     [&]<size_t... Indices>(std::index_sequence<Indices...>)
     {
@@ -112,6 +113,22 @@ namespace neam::metadata
         fnc.template operator()<Index, member>();
       } .template operator()<Indices>(), ...);
     } (std::make_index_sequence<neam::ct::list::size<n_metadata_member_list<StructType>>> {});
+  }
+
+  /// \brief Call the function on the given member of the structure, return false if the member is not present
+  template<typename StructType, typename Func>
+  constexpr bool on_member(std::string_view name, Func&& fnc)
+  {
+    bool found = false;
+    for_each_member<StructType>([&]<size_t Index, typename Member>()
+    {
+      if (found) return;
+      if (Member::name.view() != name) return;
+      found = true;
+
+      fnc.template operator()<Index, Member>();
+    });
+    return found;
   }
 }
 
