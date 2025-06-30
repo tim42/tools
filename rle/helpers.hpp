@@ -49,10 +49,6 @@ namespace neam::rle
   template<typename T>
   struct coder
   {
-    static_assert(std::is_trivially_destructible_v<T>, "T must be trivially destructible to use the default rle::coder");
-    static_assert(std::is_trivially_default_constructible_v<T>, "T must be trivially default constructible to use the default rle::coder");
-    static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable to use the default rle::coder");
-
     static_assert(!std::is_pointer_v<T>, "T must not be a pointer. Pointers are not supported.");
     static_assert(!std::is_reference_v<T>, "T must not be a reference. References are not supported.");
 
@@ -62,6 +58,11 @@ namespace neam::rle
     }
     static T decode(decoder& dc, status& st)
     {
+      // defer the errors for when we call decode()
+      static_assert(std::is_trivially_destructible_v<T>, "T must be trivially destructible to use the default rle::coder");
+      static_assert(std::is_trivially_default_constructible_v<T>, "T must be trivially default constructible to use the default rle::coder");
+      static_assert(std::is_trivially_copyable_v<T>, "T must be trivially copyable to use the default rle::coder");
+
       if (dc.get_size() >= sizeof(T))
       {
         const T* v = dc.get_address<T>();
