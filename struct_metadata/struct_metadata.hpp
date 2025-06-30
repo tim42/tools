@@ -99,6 +99,22 @@ template<typename T> struct n_metadata_member_definitions {static_assert(!std::i
 
 template<typename T> using n_metadata_member_list = typename n_metadata_member_definitions<T>::member_list;
 
+namespace neam::metadata
+{
+  template<typename StructType, typename Func>
+  void for_each_member(Func&& fnc)
+  {
+    [&]<size_t... Indices>(std::index_sequence<Indices...>)
+    {
+      ([&]<size_t Index>()
+      {
+        using member = neam::ct::list::get_type<n_metadata_member_list<StructType>, Index>;
+        fnc.template operator()<Index, member>();
+      } .template operator()<Indices>(), ...);
+    } (std::make_index_sequence<neam::ct::list::size<n_metadata_member_list<StructType>>> {});
+  }
+}
+
 namespace neam::metadata::concepts
 {
   /// \brief A struct with metadata allows for an easy and semi-automatic serialization of compound types
