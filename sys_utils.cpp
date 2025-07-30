@@ -34,7 +34,8 @@
   #include <unistd.h>
   #include <sys/wait.h>
   #include <sched.h>
-  #include <signal.h>
+  #include <csignal>
+  #include <sys/prctl.h>
 #elif defined(_WIN32)
   #include <windows.h>
   #include <stringapiset.h>
@@ -137,6 +138,67 @@ namespace neam::sys
     sigaction(SIGILL, &s, nullptr);
 #endif
   }
+
+  void attach_gdb_and_run(const gdb_operations& ops)
+  {
+#ifdef __unix__
+    const pid_t proc_pid = getpid();
+    const pid_t fork_pid = fork();
+    if (fork_pid != 0)
+    {
+      prctl(PR_SET_PTRACER, fork_pid, 0, 0, 0);
+    }
+    if (fork_pid == 0)
+    {
+      const std::string pid_str = fmt::format("--pid={}", proc_pid);
+      std::vector<const char*> args
+      {
+        "gdb", "-q", "--readnow", "--batch",
+        "-iex", "set confirm off",
+        "-iex", "set style enabled on",
+        "-iex", "set language c++",
+        "-iex", "set debuginfod enabled on",
+        "-iex", "set pagination off",
+        "-iex", "set print address off",
+        "-iex", "set print max-depth 4",
+        "-iex", "set print vtbl off",
+        "-iex", "set print object off",
+        "-iex", "set print elements 5",
+        "-iex", "set print characters 48",
+        pid_str.c_str(),
+      };
+
+      if (ops.backtrace)
+      {
+        args.push_back("-ex");
+        args.push_back("bt -entry-values no -frame-arguments all -full");
+      }
+      std::string dump_cmd = fmt::format("gcore {}", ops.dump_file);
+      if (ops.create_dump_file)
+      {
+        args.push_back("-ex");
+        args.push_back(dump_cmd.c_str());
+      }
+      // insert extra commands:
+      for (const auto& it : ops.extra_operations)
+      {
+        args.push_back("-ex");
+        args.push_back(it.c_str());
+      }
+
+      args.push_back("-ex");args.push_back("detach");
+      args.push_back("-ex");args.push_back("quit");
+
+      args.push_back(nullptr);
+      // run gdb
+      execvp("gdb", (char**)args.data());
+    }
+
+    int status = 0;
+    waitpid(fork_pid, &status, 0);
+#endif
+  }
+
 }
 
 //  gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop --method org.freedesktop.portal.FileChooser.OpenFile "" caca []

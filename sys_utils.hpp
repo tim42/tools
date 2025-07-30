@@ -41,5 +41,19 @@ namespace neam::sys
 
   void set_crash_handler(std::function<void(int /*signo*/, void* /*opt_addr*/)>&& fnc);
   void clear_crash_handler();
+
+  struct gdb_operations
+  {
+    bool create_dump_file = false;
+    std::string dump_file = "last-dump.core";
+
+    bool backtrace = false;
+
+    std::vector<std::string> extra_operations;
+  };
+
+  /// \brief Attach GDB and run some operations.
+  /// \note The function returns only after GDB exit
+  void attach_gdb_and_run(const gdb_operations& ops = {});
 }
 
