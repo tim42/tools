@@ -45,6 +45,9 @@
 /// \brief Entry in the member_list type of serializable structs
 #define N_MEMBER_DEF(Member, ...) ::neam::metadata::internal::member_definition<decltype(struct_type::Member), offsetof(struct_type, Member), #Member, struct_type __VA_OPT__(,) __VA_ARGS__>
 
+/// \brief Allows for listing static members
+#define N_STATIC_MEMBER_DEF(Member, ...) ::neam::metadata::internal::static_member_definition<decltype(struct_type::Member), []()->std::add_lvalue_reference_t<decltype(struct_type::Member)>{return struct_type::Member;}, #Member, struct_type __VA_OPT__(,) __VA_ARGS__>
+
 namespace neam::metadata::internal
 {
   template<typename T>
@@ -63,6 +66,7 @@ namespace neam::metadata::internal
     using parent_type = ParentType; // parent struct / class type
     static constexpr bool is_const = std::is_const_v<Type>;
     static constexpr bool is_volatile = std::is_volatile_v<Type>;
+    static constexpr bool is_static = false;
     static constexpr ct::string_holder name = Name;
 
 
@@ -92,6 +96,26 @@ namespace neam::metadata::internal
       const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&v);
       return *reinterpret_cast<const type*>(ptr + Offset);
     }
+  };
+
+  // also matches functions. Anything that can have its address taken
+  // follows the same format as member_definition
+  template<typename Type, auto ValueGetter, ct::string_holder Name, typename ParentType, auto... ExtraMetadata>
+  struct static_member_definition : member_definition<Type, 0, Name, ParentType, ExtraMetadata...>
+  {
+    static constexpr bool is_static = true;
+
+    /// \brief extract the member from the parent type
+    static Type& extract_from(ParentType&)
+    {
+      return ValueGetter();
+    }
+    static const Type& extract_from(const ParentType&)
+    {
+      return ValueGetter();
+    }
+
+    static constexpr const auto get_static_value() { return ValueGetter(); }
   };
 }
 
